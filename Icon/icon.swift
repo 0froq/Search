@@ -1,7 +1,9 @@
-// The app's icon, drawn rather than exported: the mark is twelve rectangles
-// — the same shape wherever it appears, in code, and in Office Commun's
-// logo.png — so it stays a crisp vector at every size instead of a raster
-// scaled up to fit.
+// The app's icon, drawn rather than exported: the mark is Drice's logo.svg,
+// reproduced as the same fourteen rectangles rather than loaded from a file,
+// so it stays a crisp vector at every size instead of a raster scaled up.
+// Unlike everywhere else the mark appears, the icon puts it on a plate —
+// a Dock icon has to be an opaque square whether the logo itself wants a
+// background or not.
 //
 // Run by build.sh:  swift Icon/icon.swift <iconset folder>
 // It writes every size macOS asks for; iconutil folds them into one .icns.
@@ -11,25 +13,33 @@ import AppKit
 let out = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "AppIcon.iconset")
 try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
 
-/// The mark: twelve bars around a centre, read from Office Commun's
-/// logo.png at 1000×1000 — top-left origin, the way an image reads. Kept
-/// as plain numbers rather than a file so drawing it costs nothing to build
-/// and nothing to bundle. See also Design.swift's `Logomark`, the same
-/// shape drawn for SwiftUI, and search.html's `--mark` SVG for the web.
+/// The source's own canvas, top-left origin, the way an image reads: 493
+/// wide, 293 tall, nothing outside it. See also Design.swift's `Logomark`,
+/// the same shape for SwiftUI, and search.html's `--mark` SVG for the web —
+/// all three read from the same fourteen numbers.
+let canvas = (width: 493.0, height: 293.0)
 let bars: [(x0: CGFloat, y0: CGFloat, x1: CGFloat, y1: CGFloat)] = [
-    (254, 436, 284, 564), (299, 395, 329, 474), (299, 526, 329, 605),
-    (382, 365, 412, 444), (382, 556, 412, 635), (487, 354, 517, 432),
-    (487, 568, 517, 646), (588, 365, 618, 444), (588, 556, 618, 635),
-    (671, 395, 701, 474), (671, 526, 701, 605), (716, 436, 746, 564),
+    (462, 82.635, 492.049, 161.513), (462, 131.464, 492.049, 210.342),
+    (416.927, 41.317, 446.976, 120.195), (416.927, 172.781, 446.976, 251.659),
+    (334.293, 11.269, 364.342, 90.147), (334.293, 202.83, 364.342, 281.708),
+    (232.878, 0, 262.927, 78.878), (232.878, 214.098, 262.927, 292.976),
+    (0, 131.464, 30.049, 210.342), (0, 82.635, 30.049, 161.513),
+    (45.073, 172.781, 75.122, 251.659), (45.073, 41.317, 75.122, 120.195),
+    (127.707, 202.83, 157.756, 281.708), (127.707, 11.269, 157.756, 90.147),
 ]
 
-/// The bars, filled into `plate` at `scale` — 1 unit of the 1000-wide source
-/// per point of `scale`, centred on the plate regardless of its size.
-func markPath(in plate: NSRect, scale: CGFloat) -> NSBezierPath {
+/// The mark, fit to `fraction` of `plate`'s width and centred on it —
+/// AppKit's y grows upward, the source's grows downward, so each bar's y is
+/// flipped on the way in.
+func markPath(in plate: NSRect, fraction: CGFloat) -> NSBezierPath {
+    let scale = plate.width * fraction / canvas.width
+    let markSize = NSSize(width: canvas.width * scale, height: canvas.height * scale)
+    let ox = plate.midX - markSize.width / 2
+    let oy = plate.midY - markSize.height / 2
     let path = NSBezierPath()
     for bar in bars {
-        let x = plate.midX + (bar.x0 - 500) * scale
-        let bottom = plate.midY + (500 - bar.y1) * scale
+        let x = ox + bar.x0 * scale
+        let bottom = oy + (canvas.height - bar.y1) * scale
         let width = (bar.x1 - bar.x0) * scale
         let height = (bar.y1 - bar.y0) * scale
         path.append(NSBezierPath(rect: NSRect(x: x, y: bottom, width: width, height: height)))
@@ -59,10 +69,10 @@ func draw(_ size: CGFloat) -> NSImage {
     shape.fill()
     NSGraphicsContext.restoreGraphicsState()
 
-    // The mark, white on the plate — scaled up from its own 1000-wide
-    // drawing so it reads with the same confidence a single glyph did.
+    // The mark, white on the plate, at 80% of its width — the same
+    // confidence a single glyph used to read with.
     NSColor.white.setFill()
-    markPath(in: plate, scale: 1.35 * s).fill()
+    markPath(in: plate, fraction: 0.8).fill()
     return image
 }
 
