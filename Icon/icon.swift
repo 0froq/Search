@@ -69,10 +69,11 @@ func draw(_ size: CGFloat) -> NSImage {
     shape.fill()
     NSGraphicsContext.restoreGraphicsState()
 
-    // The mark, black on the plate — the same two colours as logo.svg
-    // itself, not a dark plate invented to put a white mark on.
+    // The mark, black on the plate, at the size it actually is in Drice's
+    // own file rather than blown up for "Dock presence" — that was a choice
+    // this file made on its own, not one the logo asked for.
     NSColor(red: 0.09, green: 0.09, blue: 0.09, alpha: 1).setFill()
-    markPath(in: plate, fraction: 0.8).fill()
+    markPath(in: plate, fraction: 0.46).fill()
     return image
 }
 
