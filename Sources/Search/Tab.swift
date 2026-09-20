@@ -567,8 +567,7 @@ final class Tab: ObservableObject, Identifiable {
     func revive() {
         if stale {
             stale = false
-            failure = nil
-            web.reload()
+            recoverFromCrash()
             return
         }
         guard !isBlank, pending == nil, !loading, failure == nil else { return }
@@ -584,7 +583,7 @@ final class Tab: ObservableObject, Identifiable {
                 guard error.domain == WKErrorDomain,
                       error.code == WKError.webContentProcessTerminated.rawValue
                 else { return }
-                self.web.reload()
+                self.recoverFromCrash()
             }
         }
     }
