@@ -69,11 +69,11 @@ func draw(_ size: CGFloat) -> NSImage {
     shape.fill()
     NSGraphicsContext.restoreGraphicsState()
 
-    // The mark, black on the plate, at the size it actually is in Drice's
-    // own file rather than blown up for "Dock presence" — that was a choice
-    // this file made on its own, not one the logo asked for.
+    // The mark, black on the plate, at the proportion of Drice's logo.jpg
+    // (20 September 2026): 600 of a 1000-wide canvas, which on a plate that
+    // is 824 of 1024 comes to three quarters of the plate.
     NSColor(red: 0.09, green: 0.09, blue: 0.09, alpha: 1).setFill()
-    markPath(in: plate, fraction: 0.46).fill()
+    markPath(in: plate, fraction: 0.745).fill()
     return image
 }
 

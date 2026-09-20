@@ -1,16 +1,75 @@
 import SwiftUI
+import AppKit
 
 // Lifted from Office Inspiration, with the ground turned white: there the work
 // floats on an off-white canvas, here the page *is* the ground and everything
 // the browser draws has to get out of its way.
+//
+// Every colour is a pair — one for a light window, one for a dark — and
+// resolves itself against whatever appearance the window has. The window
+// takes its appearance from the app, and the app from Settings › Appearance:
+// light, dark, or whatever the Mac is doing. Nothing else in the code knows
+// which it is.
 enum Palette {
-    static let ground = Color(white: 1)
-    static let ink = Color(red: 0.09, green: 0.09, blue: 0.09)      // neutral-900
-    static let muted = Color(red: 0.55, green: 0.55, blue: 0.55)    // neutral-500
-    static let faint = Color(red: 0.83, green: 0.83, blue: 0.83)    // neutral-300
-    static let hairline = Color(red: 0.91, green: 0.91, blue: 0.91) // neutral-200
-    static let wash = Color(red: 0.937, green: 0.937, blue: 0.937)  // the live tab
-    static let hover = Color(red: 0.965, green: 0.965, blue: 0.965) // the one under the pointer
+    static let ground = Color(nsColor: NS.ground)
+    static let ink = Color(nsColor: NS.ink)             // neutral-900 · neutral-100
+    static let muted = Color(nsColor: NS.muted)         // neutral-500
+    static let faint = Color(nsColor: NS.faint)         // neutral-300 · neutral-700
+    static let hairline = Color(nsColor: NS.hairline)   // neutral-200 · neutral-800
+    static let wash = Color(nsColor: NS.wash)           // the live tab
+    static let hover = Color(nsColor: NS.hover)         // the one under the pointer
+
+    /// The same colours for the AppKit corners of the app — a text field's
+    /// ink, a window's background — which want an NSColor and keep it.
+    enum NS {
+        static let ground = pair(1.0, 0.11)
+        static let ink = pair(0.09, 0.93)
+        static let muted = pair(0.55, 0.58)
+        static let faint = pair(0.83, 0.32)
+        static let hairline = pair(0.91, 0.20)
+        static let wash = pair(0.937, 0.175)
+        static let hover = pair(0.965, 0.15)
+        /// The resting traffic lights, drawn by hand when the app is behind.
+        static let resting = pair(0.80, 0.30)
+
+        private static func pair(_ light: CGFloat, _ dark: CGFloat) -> NSColor {
+            NSColor(name: nil) { appearance in
+                let dim = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                return NSColor(white: dim ? dark : light, alpha: 1)
+            }
+        }
+    }
+}
+
+/// Light, dark, or the Mac's own — the one choice that colours everything.
+enum Look: String, CaseIterable, Identifiable {
+    case light, dark, system
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .light: return "Light"
+        case .dark: return "Dark"
+        case .system: return "System"
+        }
+    }
+
+    /// What the app is told to be. Nothing, for "system": the app then
+    /// follows the Mac, and changes with it.
+    var appearance: NSAppearance? {
+        switch self {
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        case .system: return nil
+        }
+    }
+
+    /// Set on the app rather than on the window, so every panel, alert and
+    /// sheet — and every page, which follows the window it is in — agrees.
+    func apply() {
+        NSApp.appearance = appearance
+    }
 }
 
 enum Metrics {
@@ -61,6 +120,46 @@ enum Motion {
     static let glide = Animation.spring(response: 0.34, dampingFraction: 0.82)
     static let settle = Animation.spring(response: 0.30, dampingFraction: 0.86)
     static let quick = Animation.easeOut(duration: 0.14)
+}
+
+/// Office Commun's mark — Drice's own logo.svg, reproduced here as the same
+/// fourteen rectangles rather than loaded from a file, so it stays a crisp
+/// vector at any size. No plate, no square behind it: the mark draws exactly
+/// what the source file has and nothing it doesn't, the way every other icon
+/// in this app is a bare shape rather than a shape on a background. The one
+/// exception is the macOS app icon (`Icon/icon.swift`), which needs an
+/// opaque square whether the mark wants one or not — that's the Dock's
+/// requirement, not the logo's.
+struct Logomark: Shape {
+    /// The source's own canvas: 493 × 293, nothing outside it.
+    static let canvas = CGSize(width: 493, height: 293)
+
+    private static let bars: [(x0: CGFloat, y0: CGFloat, x1: CGFloat, y1: CGFloat)] = [
+        (462, 82.635, 492.049, 161.513), (462, 131.464, 492.049, 210.342),
+        (416.927, 41.317, 446.976, 120.195), (416.927, 172.781, 446.976, 251.659),
+        (334.293, 11.269, 364.342, 90.147), (334.293, 202.83, 364.342, 281.708),
+        (232.878, 0, 262.927, 78.878), (232.878, 214.098, 262.927, 292.976),
+        (0, 131.464, 30.049, 210.342), (0, 82.635, 30.049, 161.513),
+        (45.073, 172.781, 75.122, 251.659), (45.073, 41.317, 75.122, 120.195),
+        (127.707, 202.83, 157.756, 281.708), (127.707, 11.269, 157.756, 90.147),
+    ]
+
+    func path(in rect: CGRect) -> Path {
+        // Fit the 493×293 canvas into whatever frame this is given, centred,
+        // at the larger scale that still keeps every bar inside it — the
+        // same "meet" an SVG's own viewBox would do on its own.
+        let scale = min(rect.width / Logomark.canvas.width, rect.height / Logomark.canvas.height)
+        let ox = rect.midX - Logomark.canvas.width * scale / 2
+        let oy = rect.midY - Logomark.canvas.height * scale / 2
+        var path = Path()
+        for bar in Logomark.bars {
+            path.addRect(CGRect(
+                x: ox + bar.x0 * scale, y: oy + bar.y0 * scale,
+                width: (bar.x1 - bar.x0) * scale, height: (bar.y1 - bar.y0) * scale
+            ))
+        }
+        return path
+    }
 }
 
 /// Wrong address, said without a dialog: the field shivers and stops.

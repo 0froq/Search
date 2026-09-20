@@ -69,7 +69,6 @@ extension Browser {
         panel.canChooseDirectories = parameters.allowsDirectories
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.resolvesAliases = true
-        panel.appearance = NSAppearance(named: .aqua)
         let finish: (NSApplication.ModalResponse) -> Void = { answer in
             completionHandler(answer == .OK ? panel.urls : nil)
         }
@@ -201,7 +200,13 @@ extension Browser {
     /// one thing worth offering, is what the failure view is for.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard let tab = tab(for: webView) else { return }
-        tab.failure = "The page stopped."
+        // In front of you: straight back, a reload beats a white page with a
+        // button on it. Behind another tab: the moment you come back to it.
+        if tab.id == activeID, !tab.isBlank {
+            tab.reload()
+        } else {
+            tab.stale = true
+        }
     }
 }
 
@@ -231,9 +236,6 @@ enum Dialogs {
         over webView: WKWebView,
         then finish: @escaping (NSApplication.ModalResponse) -> Void
     ) {
-        // The window is always light; a sheet that went dark with the
-        // system looked like it belonged to some other app.
-        alert.window.appearance = NSAppearance(named: .aqua)
         if let window = window(for: webView) {
             alert.beginSheetModal(for: window, completionHandler: finish)
         } else {

@@ -169,8 +169,16 @@ struct SettingsPanel: View {
                 }
             }
             Rule()
+            Line("Appearance", "Light, dark, or whatever the Mac is doing — pages follow it too") {
+                Segmented(options: Look.allCases.map { ($0, $0.title) }, selection: $prefs.look)
+            }
+            Rule()
             Line("Correct spelling as you type", "macOS's autocorrect inside pages — the one that capitalises for you") {
                 Switch(on: $prefs.autocorrect)
+            }
+            Rule()
+            Line("Let a script drive Search", "A local socket for testing. Its tabs open beside yours with a flask on them and never take over — see ./bench") {
+                Switch(on: $prefs.bench)
             }
         }
     }
@@ -208,7 +216,7 @@ struct SettingsPanel: View {
                     Switch(on: $prefs.savesPasswords)
                 }
                 Rule()
-                Line("Fill in sign-ins", "One account goes straight in; several, you pick") {
+                Line("Fill in sign-ins", "Click a sign-in box and the accounts kept for the site hang from it") {
                     Switch(on: $prefs.fillsPasswords)
                 }
                 if !Vault.never.isEmpty {
@@ -302,11 +310,10 @@ struct SettingsPanel: View {
     private var about: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
-                Text("S")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(.white)
-                    .frame(width: 46, height: 46)
-                    .background(Palette.ink, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Logomark()
+                    .fill(Palette.ink)
+                    .aspectRatio(Logomark.canvas.width / Logomark.canvas.height, contentMode: .fit)
+                    .frame(height: 34)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Search")
                         .font(.system(size: 15, weight: .semibold))
@@ -320,10 +327,6 @@ struct SettingsPanel: View {
 
             Card {
                 Line(versionTitle, versionDetail) { versionControl }
-                Rule()
-                Line("Always light", "The page is the ground, so the frame stays white in dark mode too") {
-                    EmptyView()
-                }
                 Rule()
                 Line("Found something wrong?", "Opens a draft with the version already in it") {
                     Pill("Send Feedback") { Links.writeFeedback() }
@@ -540,7 +543,7 @@ struct Switch: View {
             .frame(width: 30, height: 18)
             .overlay(alignment: on ? .trailing : .leading) {
                 Circle()
-                    .fill(.white)
+                    .fill(Palette.ground)
                     .shadow(color: .black.opacity(0.18), radius: 1.5, y: 1)
                     .padding(2)
             }
@@ -571,7 +574,7 @@ struct Pill: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 11.5))
-                .foregroundStyle(filled ? .white : tint)
+                .foregroundStyle(filled ? Palette.ground : tint)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(filled ? Palette.ink : (hovering ? Palette.hover : Palette.ground), in: Capsule())

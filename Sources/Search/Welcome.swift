@@ -276,16 +276,15 @@ struct WelcomePanel: View {
 
     // MARK: - pieces
 
-    /// The placeholder icon, drawn: an ink plate and the letter.
+    /// The mark alone, at whatever height the page wants — no plate behind
+    /// it, the same as everywhere else it's drawn.
     private struct Plate: View {
         let size: CGFloat
         var body: some View {
-            Text("S")
-                .font(.system(size: size * 0.5, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: size, height: size)
-                .background(Palette.ink, in: RoundedRectangle(cornerRadius: size * 0.26, style: .continuous))
-                .shadow(color: .black.opacity(0.18), radius: 16, y: 8)
+            Logomark()
+                .fill(Palette.ink)
+                .aspectRatio(Logomark.canvas.width / Logomark.canvas.height, contentMode: .fit)
+                .frame(height: size * 0.56)
         }
     }
 
@@ -305,7 +304,7 @@ struct WelcomePanel: View {
             Button(action: act) {
                 Text(title)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(filled ? .white : Palette.ink)
+                    .foregroundStyle(filled ? Palette.ground : Palette.ink)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 9)
                     .background(filled ? Palette.ink : (hovering ? Palette.hover : Palette.wash), in: Capsule())

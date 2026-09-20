@@ -263,6 +263,13 @@ struct ContentView: View {
                                         .transition(.move(edge: .top).combined(with: .opacity))
                                 }
                             }
+                            .overlay(alignment: .topLeading) {
+                                if let asked = browser.suggesting, asked.tab == tab.id {
+                                    AccountList(browser: browser, asked: asked)
+                                        .transition(.opacity)
+                                }
+                            }
+                            .animation(Motion.quick, value: browser.suggesting)
                     } else {
                         Palette.ground
                     }
@@ -291,10 +298,6 @@ struct ContentView: View {
                 keepAsking(offer)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-            if !browser.choosing.isEmpty {
-                choosingAccount(browser.choosing)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
             if browser.veiling {
                 hint("Click anything to hide it   ⌘Z undo   esc done")
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -304,7 +307,6 @@ struct ContentView: View {
         .animation(Motion.settle, value: browser.veiling)
         .animation(Motion.settle, value: browser.asking)
         .animation(Motion.settle, value: browser.offering)
-        .animation(Motion.settle, value: browser.choosing)
     }
 
     /// The address field: raised over a page by ⌘L or ⌘K, and standing on its
@@ -455,7 +457,7 @@ struct ContentView: View {
             Button { browser.allowCapture() } label: {
                 Text("Allow")
                     .font(.system(size: 12))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Palette.ground)
                     .padding(.horizontal, 11)
                     .padding(.vertical, 5)
                     .background(Palette.ink, in: Capsule())
@@ -492,7 +494,7 @@ struct ContentView: View {
             Button(offer.changed ? "Update" : "Save") { browser.keepOffer() }
                 .buttonStyle(.plain)
                 .font(.system(size: 12))
-                .foregroundStyle(.white)
+                .foregroundStyle(Palette.ground)
                 .padding(.horizontal, 11)
                 .padding(.vertical, 5)
                 .background(Palette.ink, in: Capsule())
@@ -515,46 +517,13 @@ struct ContentView: View {
         .shadow(color: .black.opacity(0.12), radius: 20, y: 6)
     }
 
-    /// More than one account kept for a sign-in. Named, so you pick by
-    /// reading rather than by guessing which is first.
-    private func choosingAccount(_ logins: [Login]) -> some View {
-        HStack(spacing: 8) {
-            Text("Sign in as")
-                .font(.system(size: 12.5))
-                .foregroundStyle(Palette.muted)
-            ForEach(logins) { login in
-                Button(login.user.isEmpty ? login.host : login.user) { browser.choose(login) }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Palette.ink)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Palette.wash, in: Capsule())
-            }
-            Button {
-                browser.dropChoice()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(Palette.muted)
-                    .frame(width: 18, height: 18)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
-        .padding(.vertical, 8)
-        .background(Palette.ground, in: Capsule())
-        .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.12), radius: 20, y: 6)
-    }
 
     /// A dark pill, for the one mode this browser has. It stays up for as long
     /// as the mode does, which is how you know you are still in it.
     private func hint(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11.5))
-            .foregroundStyle(.white.opacity(0.92))
+            .foregroundStyle(Palette.ground.opacity(0.92))
             .padding(.horizontal, 15)
             .padding(.vertical, 9)
             .background(Palette.ink.opacity(0.92), in: Capsule())
@@ -624,10 +593,11 @@ struct ContentView: View {
     }
 
     private func dress(_ window: NSWindow) {
-        window.appearance = NSAppearance(named: .aqua)
+        // Light or dark is the app's to say (Settings › Appearance); the
+        // window only has to be the ground colour that goes with it.
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.backgroundColor = .white
+        window.backgroundColor = Palette.NS.ground
         // The strip does the dragging, so the page underneath can't be grabbed
         // by accident while selecting text.
         window.isMovableByWindowBackground = false
@@ -699,7 +669,7 @@ struct ContentView: View {
                 browser.managing = false
                 return true
             }
-            if !browser.choosing.isEmpty {
+            if browser.suggesting != nil {
                 browser.dropChoice()
                 return true
             }

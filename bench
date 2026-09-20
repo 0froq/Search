@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Drive the Search you already have open, from the shell.
+
+    ./bench tabs                       every tab, yours and the bench's
+    ./bench open URL                   a bench tab at the end of the row → its id
+    ./bench go ID URL                  send a bench tab somewhere else
+    ./bench wait ID [SECONDS]          until the page has loaded
+    ./bench text ID                    the page's text
+    ./bench eval ID JS                 run JavaScript, print what it returns
+    ./bench click ID SELECTOR
+    ./bench type ID SELECTOR TEXT
+    ./bench submit ID SELECTOR         the form around SELECTOR
+    ./bench shot ID [PATH] [WIDTH]     a PNG of the page → its path
+    ./bench close ID | all             only tabs the bench opened
+
+Needs Settings › General › "Let a script drive Search" switched on in the
+running app. IDs are the first characters of a tab's id, as `tabs` prints
+them. With --test, talks to a SEARCH_PROBE run instead of the real one.
+"""
+
+import json
+import os
+import socket
+import sys
+
+def folder(test):
+    name = "Search (test)" if test else "Search"
+    return os.path.expanduser(f"~/Library/Application Support/{name}")
+
+def ask(path, request):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+        try:
+            s.connect(path)
+        except (FileNotFoundError, ConnectionRefusedError):
+            sys.exit("Search isn't listening — is it open, with Settings › General › "
+                     "“Let a script drive Search” on?")
+        s.sendall((json.dumps(request) + "\n").encode())
+        chunks = []
+        while True:
+            chunk = s.recv(1 << 16)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    line = b"".join(chunks).split(b"\n", 1)[0]
+    return json.loads(line or b"{}")
+
+def main(argv):
+    test = "--test" in argv
+    argv = [a for a in argv if a != "--test"]
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    verb, args = argv[0], argv[1:]
+    request = {"do": verb}
+    if verb == "open":
+        if len(args) != 1: sys.exit("usage: bench open URL")
+        request["url"] = args[0]
+    elif verb == "go":
+        if len(args) != 2: sys.exit("usage: bench go ID URL")
+        request["id"], request["url"] = args
+    elif verb in ("wait",):
+        if not args: sys.exit("usage: bench wait ID [SECONDS]")
+        request["id"] = args[0]
+        if len(args) > 1: request["seconds"] = float(args[1])
+    elif verb in ("text", "close"):
+        if len(args) != 1: sys.exit(f"usage: bench {verb} ID")
+        request["id"] = args[0]
+    elif verb == "eval":
+        if len(args) != 2: sys.exit("usage: bench eval ID JS")
+        request["id"], request["js"] = args
+    elif verb in ("click", "submit"):
+        if len(args) != 2: sys.exit(f"usage: bench {verb} ID SELECTOR")
+        request["id"], request["selector"] = args
+    elif verb == "type":
+        if len(args) != 3: sys.exit("usage: bench type ID SELECTOR TEXT")
+        request["id"], request["selector"], request["text"] = args
+    elif verb == "shot":
+        if not args: sys.exit("usage: bench shot ID [PATH] [WIDTH]")
+        request["id"] = args[0]
+        if len(args) > 1: request["path"] = os.path.abspath(args[1])
+        if len(args) > 2: request["width"] = float(args[2])
+    elif verb != "tabs":
+        sys.exit(f"unknown command “{verb}” — see bench help")
+
+    answer = ask(os.path.join(folder(test), "bench.sock"), request)
+    if "error" in answer:
+        sys.exit("error: " + str(answer["error"]))
+    if verb == "text":
+        print(answer.get("text", ""))
+        if answer.get("truncated"):
+            print("\n[… truncated]", file=sys.stderr)
+    elif verb == "shot":
+        print(answer["path"])
+    elif verb == "open":
+        print(answer["id"])
+    elif verb == "eval":
+        value = answer.get("value")
+        print(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2))
+    elif verb == "tabs":
+        for tab in answer.get("tabs", []):
+            mark = "⚗" if tab.get("bench") else ("●" if tab.get("active") else " ")
+            state = " …" if tab.get("loading") else ""
+            print(f"{mark} {tab['id']}  {tab.get('title') or '—'}  {tab.get('url')}{state}")
+    else:
+        print(json.dumps(answer, ensure_ascii=False, indent=2))
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

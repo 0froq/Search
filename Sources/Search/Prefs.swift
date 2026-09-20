@@ -26,6 +26,18 @@ enum Glyph: String, CaseIterable, Identifiable {
 final class Preferences: ObservableObject {
     private let store = Store.settings
 
+    /// A local socket a script can drive the browser through, in tabs of its
+    /// own. Off unless asked for.
+    @Published var bench: Bool {
+        didSet { store.set(bench, forKey: "bench") }
+    }
+    /// Light, dark, or the Mac's own.
+    @Published var look: Look {
+        didSet {
+            store.set(look.rawValue, forKey: "look")
+            look.apply()
+        }
+    }
     /// Titles down the left instead of across the top.
     @Published var sidebar: Bool {
         didSet { store.set(sidebar, forKey: "sidebar") }
@@ -77,6 +89,12 @@ final class Preferences: ObservableObject {
     init() {
         // Carried over from when there were four ways of holding the browser
         // and this was one of them.
+        // Light unless asked otherwise — the browser was only ever light
+        // before this was a choice.
+        bench = store.bool(forKey: "bench")
+        let chosen = store.string(forKey: "look").flatMap(Look.init) ?? .light
+        look = chosen
+        chosen.apply()
         sidebar = store.object(forKey: "sidebar") as? Bool
             ?? (store.string(forKey: "manner") == "side")
         let width = store.object(forKey: "sidebar.width") as? Double ?? Double(Metrics.side)

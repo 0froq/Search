@@ -19,7 +19,7 @@ struct Omnibox: View {
             if over {
                 // The page is still there, just out of the way.
                 Rectangle()
-                    .fill(Color.white.opacity(0.74))
+                    .fill(Palette.ground.opacity(0.74))
                     .ignoresSafeArea()
                     .onTapGesture { browser.dismiss() }
                     .transition(.opacity)
@@ -179,7 +179,7 @@ struct AddressField: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 15.5)
-        field.textColor = NSColor(Palette.ink)
+        field.textColor = Palette.NS.ink
         field.lineBreakMode = .byTruncatingTail
         field.cell?.usesSingleLineMode = true
         field.cell?.wraps = false
@@ -224,7 +224,7 @@ struct AddressField: NSViewRepresentable {
                 // window. A tenth of the ink says "selected" quietly enough.
                 editor.selectedTextAttributes = [
                     .backgroundColor: NSColor(Palette.ink.opacity(0.12)),
-                    .foregroundColor: NSColor(Palette.ink),
+                    .foregroundColor: Palette.NS.ink,
                 ]
                 editor.selectAll(nil)
             }
@@ -271,7 +271,7 @@ struct AddressField: NSViewRepresentable {
             guard let editor = field.currentEditor() as? NSTextView else { return }
             editor.selectedTextAttributes = [
                 .backgroundColor: NSColor(Palette.ink.opacity(0.12)),
-                .foregroundColor: NSColor(Palette.ink),
+                .foregroundColor: Palette.NS.ink,
             ]
             let length = field.stringValue.count
             guard start <= length else { return }

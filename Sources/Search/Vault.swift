@@ -21,26 +21,22 @@ struct Login: Identifiable, Equatable, Hashable {
 }
 
 enum Vault {
-    private static let label = "Search"
+    /// What every item of ours is tagged with. A test run tags its own, so a
+    /// password saved while trying something never sits among the real ones.
+    private static let label = Store.testing ? "Search (test)" : "Search"
 
     // MARK: - reading
+
+    /// The keychain will list many items, or hand over one secret — not
+    /// both in one call. Asked for every item's data at once it answers
+    /// errSecParam, and it did so quietly enough that for a while this app
+    /// saved passwords it could never read back. So: the list first, without
+    /// secrets, then each secret on its own.
 
     /// What is kept for a host, exactly. See `logins(matching:)` for the
     /// version that also looks across a site's subdomains.
     static func logins(for host: String) -> [Login] {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassInternetPassword,
-            kSecAttrLabel as String: label,
-            kSecAttrServer as String: host,
-            kSecReturnAttributes as String: true,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
-              let rows = out as? [[String: Any]]
-        else { return [] }
-        return rows.compactMap(login(from:))
+        rows(where: [kSecAttrServer as String: host]).compactMap(login(from:))
     }
 
     /// The keychain matches a server name exactly, and a sign-in rarely lives
@@ -48,33 +44,63 @@ enum Vault {
     /// password was kept for example.com. So the site is matched as a site:
     /// the host first, then anything sharing its registrable domain.
     static func logins(matching host: String) -> [Login] {
-        let exact = logins(for: host)
         let domain = registrable(host)
-        let wider = all().filter { $0.host != host && registrable($0.host) == domain }
+        let exact = logins(for: host)
+        let wider = rows(where: [:])
+            .filter { ($0[kSecAttrServer as String] as? String).map { $0 != host && registrable($0) == domain } ?? false }
+            .compactMap(login(from:))
         return (exact + wider).sorted { ($0.used ?? .distantPast) > ($1.used ?? .distantPast) }
     }
 
     /// Everything this app holds, for the list. Read on demand and never kept
     /// in a property.
     static func all() -> [Login] {
+        rows(where: [:]).compactMap(login(from:))
+            .sorted { $0.host == $1.host ? $0.user < $1.user : $0.host < $1.host }
+    }
+
+    /// The items' attributes — no secrets — narrowed by whatever is given.
+    private static func rows(where extra: [String: Any]) -> [[String: Any]] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecAttrLabel as String: label,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        extra.forEach { query[$0] = $1 }
+        var out: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        guard status == errSecSuccess, let rows = out as? [[String: Any]] else {
+            // Nothing kept reads as "not found"; anything else is worth a
+            // line in the log, because the panel will only say "nothing".
+            if status != errSecItemNotFound { NSLog("Vault: keychain list failed (%d)", status) }
+            return []
+        }
+        return rows
+    }
+
+    /// One item's secret, by the two things that name it.
+    private static func secret(host: String, user: String) -> String? {
         var out: CFTypeRef?
         let status = SecItemCopyMatching([
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrLabel as String: label,
-            kSecReturnAttributes as String: true,
+            kSecAttrServer as String: host,
+            kSecAttrAccount as String: user,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecMatchLimit as String: kSecMatchLimitOne,
         ] as CFDictionary, &out)
-        guard status == errSecSuccess, let rows = out as? [[String: Any]] else { return [] }
-        return rows.compactMap(login(from:))
-            .sorted { $0.host == $1.host ? $0.user < $1.user : $0.host < $1.host }
+        guard status == errSecSuccess, let data = out as? Data else {
+            if status != errSecItemNotFound { NSLog("Vault: keychain read failed (%d)", status) }
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     private static func login(from row: [String: Any]) -> Login? {
         guard let host = row[kSecAttrServer as String] as? String,
               let user = row[kSecAttrAccount as String] as? String,
-              let data = row[kSecValueData as String] as? Data,
-              let password = String(data: data, encoding: .utf8)
+              let password = secret(host: host, user: user)
         else { return nil }
         // The keychain has no "last used" of its own; it rides in the comment.
         let used = (row[kSecAttrComment as String] as? String)

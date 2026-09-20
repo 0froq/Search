@@ -149,6 +149,12 @@ final class StageView: NSView {
             wanted.removeFromSuperview()
             wanted.alphaValue = 1
             addSubview(wanted)
+            // A web view coming back into a window sometimes keeps the last
+            // picture it had — which, after a while out of one, is nothing.
+            // Asking it to draw again is cheap and is what brings it back.
+            wanted.needsLayout = true
+            wanted.needsDisplay = true
+            wanted.layer?.setNeedsDisplay()
         }
         wanted.frame = bounds
     }
@@ -287,7 +293,7 @@ final class RestingLights: NSView {
     }
 
     override func draw(_ dirty: NSRect) {
-        NSColor(calibratedWhite: 0.80, alpha: 1).setFill()
+        Palette.NS.resting.setFill()
         for spot in spots { NSBezierPath(ovalIn: spot).fill() }
     }
 

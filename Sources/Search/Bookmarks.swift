@@ -1,12 +1,11 @@
 import AppKit
 import SwiftUI
 
-// Bookmarks: folders and sites, kept in a small file, shown as a menu.
+// Bookmarks: folders and sites, kept in a small file.
 //
-// The menu is the system's own. A folder opens on hover, a site opens on
-// click, and the whole thing closes the way every other menu on the Mac
-// does — which is exactly what a person expects of a list of places, and
-// nothing a hand-drawn dropdown gets right on the first try.
+// Shown as the app's own kind of list rather than a system menu, on purpose:
+// a menu can't be dragged into, and can't be asked a second thing by
+// right-clicking it. A folder you actually keep things in wants both.
 
 struct Bookmark: Codable, Identifiable, Hashable {
     var id = UUID()
@@ -16,6 +15,10 @@ struct Bookmark: Codable, Identifiable, Hashable {
     var children: [Bookmark]?
 
     var isFolder: Bool { url == nil }
+
+    var host: String? {
+        url.flatMap { URL(string: $0)?.host()?.lowercased() }
+    }
 
     static func site(_ title: String, _ url: URL) -> Bookmark {
         Bookmark(title: title.isEmpty ? Address.pretty(url) : title, url: url.absoluteString, children: nil)
@@ -49,10 +52,19 @@ final class Bookmarks: ObservableObject {
         }
     }
 
+    /// Every folder in the tree, each with how deep it sits — for "move to
+    /// folder" lists, where a folder three deep should look like it.
+    static func folders(_ nodes: [Bookmark], depth: Int = 0) -> [(node: Bookmark, depth: Int)] {
+        nodes.flatMap { node -> [(Bookmark, Int)] in
+            guard node.isFolder else { return [] }
+            return [(node, depth)] + folders(node.children ?? [], depth: depth + 1)
+        }
+    }
+
     // MARK: - changing
 
     /// The page, at the end of the list. Nothing is asked: the title is the
-    /// page's, and moving it into a folder is a job for the panel.
+    /// page's, and filing it into a folder is a drag or a right-click away.
     func add(_ url: URL, title: String) {
         guard !contains(url) else { return }
         roots.append(.site(title, url))
@@ -67,16 +79,72 @@ final class Bookmarks: ObservableObject {
     }
 
     func remove(_ id: Bookmark.ID) {
-        func prune(_ nodes: [Bookmark]) -> [Bookmark] {
-            nodes.compactMap { node in
-                if node.id == id { return nil }
-                var copy = node
-                if let kids = node.children { copy.children = prune(kids) }
-                return copy
+        roots = Bookmarks.prune(id, from: roots)
+        save()
+    }
+
+    private static func prune(_ id: Bookmark.ID, from nodes: [Bookmark]) -> [Bookmark] {
+        nodes.compactMap { node in
+            if node.id == id { return nil }
+            var copy = node
+            if let kids = node.children { copy.children = prune(id, from: kids) }
+            return copy
+        }
+    }
+
+    /// Takes a bookmark or a whole folder out of wherever it currently sits
+    /// and puts it at the end of another folder's children — or back at the
+    /// top level when `folderID` is nil. Moving a folder into its own
+    /// children is refused rather than allowed to erase it by looping it
+    /// inside itself; moving it onto itself is simply nothing to do.
+    func move(_ id: Bookmark.ID, into folderID: Bookmark.ID?) {
+        guard id != folderID else { return }
+        var working = roots
+        guard let node = Bookmarks.detach(id, from: &working) else { return }
+        if let folderID {
+            guard !Bookmarks.holds(folderID, node) else { return }
+            guard Bookmarks.insert(node, into: folderID, nodes: &working) else { return }
+        } else {
+            working.append(node)
+        }
+        roots = working
+        save()
+    }
+
+    private static func detach(_ id: Bookmark.ID, from nodes: inout [Bookmark]) -> Bookmark? {
+        for i in nodes.indices {
+            if nodes[i].id == id { return nodes.remove(at: i) }
+            guard nodes[i].children != nil else { continue }
+            var kids = nodes[i].children!
+            if let found = detach(id, from: &kids) {
+                nodes[i].children = kids
+                return found
             }
         }
-        roots = prune(roots)
-        save()
+        return nil
+    }
+
+    @discardableResult
+    private static func insert(_ node: Bookmark, into id: Bookmark.ID, nodes: inout [Bookmark]) -> Bool {
+        for i in nodes.indices {
+            if nodes[i].id == id, nodes[i].isFolder {
+                nodes[i].children = (nodes[i].children ?? []) + [node]
+                return true
+            }
+            guard nodes[i].children != nil else { continue }
+            var kids = nodes[i].children!
+            if insert(node, into: id, nodes: &kids) {
+                nodes[i].children = kids
+                return true
+            }
+        }
+        return false
+    }
+
+    /// `id` is `node` itself, or somewhere inside it — also used by the
+    /// outline to keep a folder out of its own "move to" list.
+    fileprivate static func holds(_ id: Bookmark.ID, _ node: Bookmark) -> Bool {
+        node.id == id || (node.children ?? []).contains { holds(id, $0) }
     }
 
     /// Another browser's, kept apart in a folder of that browser's name
@@ -90,99 +158,6 @@ final class Bookmarks: ObservableObject {
             roots.append(.folder(name, nodes))
         }
         save()
-    }
-
-    // MARK: - as a menu
-
-    /// The list, as the menu it is shown in. Folders become submenus; sites
-    /// carry their icon when one is known.
-    func menu(open: @escaping (URL) -> Void, manage: @escaping () -> Void, addHere: @escaping () -> Void) -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        if roots.isEmpty {
-            let empty = NSMenuItem(title: "No bookmarks yet", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-        } else {
-            fill(menu, with: roots, open: open)
-        }
-        menu.addItem(.separator())
-        menu.addItem(Bookmarks.item("Add This Page", "bookmark", addHere))
-        menu.addItem(Bookmarks.item("Manage Bookmarks…", nil, manage))
-        return menu
-    }
-
-    private func fill(_ menu: NSMenu, with nodes: [Bookmark], open: @escaping (URL) -> Void) {
-        for node in nodes {
-            if node.isFolder {
-                let item = NSMenuItem(title: node.title, action: nil, keyEquivalent: "")
-                item.image = Bookmarks.glyph("folder")
-                let sub = NSMenu(title: node.title)
-                sub.autoenablesItems = false
-                if let kids = node.children, !kids.isEmpty {
-                    fill(sub, with: kids, open: open)
-                } else {
-                    let empty = NSMenuItem(title: "Empty", action: nil, keyEquivalent: "")
-                    empty.isEnabled = false
-                    sub.addItem(empty)
-                }
-                item.submenu = sub
-                menu.addItem(item)
-            } else if let text = node.url, let url = URL(string: text) {
-                // A page's own title can run to a sentence; a menu is not
-                // the place for it.
-                let title = node.title.count > 60 ? String(node.title.prefix(58)).trimmingCharacters(in: .whitespaces) + "…" : node.title
-                let item = Bookmarks.item(title, nil) { open(url) }
-                item.image = Bookmarks.icon(for: url)
-                item.toolTip = Address.pretty(url)
-                menu.addItem(item)
-            }
-        }
-    }
-
-    /// A menu item that runs a closure. NSMenuItem wants a target and a
-    /// selector; this keeps the two together.
-    private static func item(_ title: String, _ symbol: String?, _ act: @escaping () -> Void) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: #selector(Runner.run), keyEquivalent: "")
-        let runner = Runner(act)
-        item.target = runner
-        item.representedObject = runner
-        if let symbol { item.image = glyph(symbol) }
-        return item
-    }
-
-    private final class Runner: NSObject {
-        let act: () -> Void
-        init(_ act: @escaping () -> Void) { self.act = act }
-        @objc func run() { act() }
-    }
-
-    private static func glyph(_ symbol: String) -> NSImage? {
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        return image?.withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
-    }
-
-    /// The site's icon at menu size, or a small plate with its letter.
-    private static func icon(for url: URL) -> NSImage {
-        let host = url.host()?.lowercased() ?? ""
-        if let cached = Favicons.shared.cached(host) {
-            let copy = cached.copy() as! NSImage
-            copy.size = NSSize(width: 16, height: 16)
-            return copy
-        }
-        let letter = String(host.replacingOccurrences(of: "www.", with: "").prefix(1)).uppercased()
-        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
-            NSColor(white: 0.93, alpha: 1).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
-            let text = NSAttributedString(string: letter, attributes: [
-                .font: NSFont.systemFont(ofSize: 9, weight: .medium),
-                .foregroundColor: NSColor(white: 0.45, alpha: 1),
-            ])
-            let size = text.size()
-            text.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
-            return true
-        }
-        return image
     }
 
     // MARK: - the file
@@ -209,29 +184,246 @@ final class Bookmarks: ObservableObject {
     }
 }
 
-/// Where the menu comes out of: an empty AppKit view under the SwiftUI
-/// button, so the menu can be told exactly which corner to hang from.
-struct MenuAnchor: NSViewRepresentable {
-    let pop: Int
-    let menu: () -> NSMenu
+// MARK: - the tree, drawn
 
-    func makeNSView(context: Context) -> NSView { NSView() }
+/// The list itself: folders that open in place rather than to the side, each
+/// row draggable into another folder or back out to the top, each row good
+/// for a right-click too. Used both in the small dropdown off the button and
+/// in the full manager — the interaction is the same size either way.
+struct BookmarkOutline: View {
+    @ObservedObject var bookmarks: Bookmarks
+    let open: (URL) -> Void
 
-    func updateNSView(_ view: NSView, context: Context) {
-        guard pop != context.coordinator.shown, pop > 0 else { return }
-        context.coordinator.shown = pop
-        let menu = menu()
-        DispatchQueue.main.async {
-            menu.popUp(positioning: nil, at: NSPoint(x: view.bounds.minX, y: view.bounds.minY - 6), in: view)
+    @State private var expanded: Set<Bookmark.ID> = []
+    @State private var dragging: Bookmark.ID?
+    @State private var overRoot = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            rows(bookmarks.roots, depth: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(overRoot ? Palette.wash : .clear)
+        .onDrop(of: [.text], isTargeted: $overRoot) { providers in drop(providers, into: nil) }
+    }
+
+    @ViewBuilder
+    private func rows(_ nodes: [Bookmark], depth: Int) -> some View {
+        ForEach(nodes) { node in
+            Row(
+                node: node,
+                depth: depth,
+                open: node.isFolder ? nil : { open(URL(string: node.url!)!) },
+                isOpen: expanded.contains(node.id),
+                dragging: dragging == node.id,
+                toggle: node.isFolder ? { toggle(node.id) } : nil,
+                moveTargets: Bookmarks.folders(bookmarks.roots).filter { !Bookmarks.holds($0.node.id, node) },
+                moveTo: { bookmarks.move(node.id, into: $0) },
+                remove: { bookmarks.remove(node.id) }
+            )
+            .onDrag {
+                dragging = node.id
+                return NSItemProvider(object: node.id.uuidString as NSString)
+            }
+            .modifier(DropOnto(active: node.isFolder) { providers in drop(providers, into: node.id) })
+
+            if node.isFolder, expanded.contains(node.id) {
+                if let kids = node.children, !kids.isEmpty {
+                    // Type-erased: a view that calls itself can't let Swift
+                    // infer its own opaque return type from its own body.
+                    AnyView(rows(kids, depth: depth + 1))
+                } else {
+                    Text("Empty")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.faint)
+                        .padding(.leading, indent(depth + 1) + 26)
+                        .padding(.vertical, 5)
+                }
+            }
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    private func toggle(_ id: Bookmark.ID) {
+        if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+    }
 
-    final class Coordinator { var shown = 0 }
+    private func drop(_ providers: [NSItemProvider], into folderID: Bookmark.ID?) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: String.self) }) else { return false }
+        _ = provider.loadObject(ofClass: String.self) { text, _ in
+            guard let text, let id = UUID(uuidString: text) else { return }
+            DispatchQueue.main.async {
+                self.bookmarks.move(id, into: folderID)
+                self.dragging = nil
+            }
+        }
+        return true
+    }
+
+    private func indent(_ depth: Int) -> CGFloat { CGFloat(depth) * 18 }
+
+    /// Lets a row's own onDrop only run for folders — a bookmark isn't a
+    /// place to file something else into — while every row still fires the
+    /// same one onDrag above.
+    private struct DropOnto: ViewModifier {
+        let active: Bool
+        let action: ([NSItemProvider]) -> Bool
+        @State private var targeted = false
+
+        func body(content: Content) -> some View {
+            if active {
+                content
+                    .background(targeted ? Palette.hover : .clear)
+                    .onDrop(of: [.text], isTargeted: $targeted, perform: action)
+            } else {
+                content
+            }
+        }
+    }
+
+    private struct Row: View {
+        let node: Bookmark
+        let depth: Int
+        /// Nil for a folder — folders open in place, not out to a page.
+        let open: (() -> Void)?
+        let isOpen: Bool
+        let dragging: Bool
+        let toggle: (() -> Void)?
+        let moveTargets: [(node: Bookmark, depth: Int)]
+        let moveTo: (Bookmark.ID?) -> Void
+        let remove: () -> Void
+
+        @State private var hovering = false
+
+        var body: some View {
+            HStack(spacing: 8) {
+                if node.isFolder {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Palette.faint)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        .frame(width: 10)
+                    Mark(icon: nil, letter: "", size: 15)
+                        .overlay(
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(Palette.muted)
+                        )
+                } else {
+                    Spacer().frame(width: 10)
+                    Mark(icon: Favicons.shared.cached(node.host ?? ""), letter: String((node.host ?? "•").prefix(1)).uppercased(), size: 15)
+                }
+                Text(node.title)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if node.isFolder, let kids = node.children, !kids.isEmpty {
+                    Text("\(Bookmarks.count(kids))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.faint)
+                }
+            }
+            .padding(.leading, CGFloat(depth) * 18 + 10)
+            .padding(.trailing, 10)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Palette.wash : .clear))
+            .contentShape(Rectangle())
+            .opacity(dragging ? 0.35 : 1)
+            .onTapGesture { open?() ?? toggle?() }
+            .onHover { hovering = $0 }
+            .contextMenu {
+                if let open {
+                    Button("Open", action: open)
+                    Divider()
+                }
+                Menu("Move to") {
+                    Button("Top Level", action: { moveTo(nil) })
+                    if !moveTargets.isEmpty {
+                        Divider()
+                        ForEach(moveTargets, id: \.node.id) { target in
+                            Button(String(repeating: "   ", count: target.depth) + target.node.title) {
+                                moveTo(target.node.id)
+                            }
+                        }
+                    }
+                }
+                Divider()
+                Button("Remove", role: .destructive, action: remove)
+            }
+            .animation(Motion.quick, value: hovering)
+            .animation(Motion.quick, value: dragging)
+        }
+    }
 }
 
-/// The list of everything kept, for taking things out of it.
+/// The button's dropdown: the tree, and the two things that aren't in it.
+struct BookmarksDropdown: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject var bookmarks: Bookmarks
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if bookmarks.isEmpty {
+                Text("No bookmarks yet")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Palette.muted)
+                    .padding(14)
+            } else {
+                ScrollView {
+                    BookmarkOutline(bookmarks: bookmarks) { url in
+                        browser.bookmarking = false
+                        browser.visit(url)
+                    }
+                    .padding(6)
+                }
+                .frame(maxHeight: 360)
+            }
+            Divider().overlay(Palette.hairline)
+            VStack(spacing: 1) {
+                Foot("bookmark", "Add This Page") { browser.bookmarkCurrent() }
+                Foot(nil, "Manage Bookmarks…") { browser.bookmarking = true }
+            }
+            .padding(6)
+        }
+        .frame(width: 280)
+        .background(Palette.ground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 1))
+    }
+
+    private struct Foot: View {
+        let symbol: String?
+        let title: String
+        let act: () -> Void
+        @State private var hovering = false
+
+        init(_ symbol: String?, _ title: String, act: @escaping () -> Void) {
+            self.symbol = symbol
+            self.title = title
+            self.act = act
+        }
+
+        var body: some View {
+            HStack(spacing: 8) {
+                if let symbol {
+                    Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(Palette.muted).frame(width: 14)
+                } else {
+                    Spacer().frame(width: 14)
+                }
+                Text(title).font(.system(size: 12.5)).foregroundStyle(Palette.ink)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Palette.wash : .clear))
+            .contentShape(Rectangle())
+            .onTapGesture(perform: act)
+            .onHover { hovering = $0 }
+        }
+    }
+}
+
+/// The full list, for taking things out of it or bringing more in.
 struct BookmarksPanel: View {
     @ObservedObject var browser: Browser
     @ObservedObject var bookmarks: Bookmarks
@@ -259,20 +451,9 @@ struct BookmarksPanel: View {
                     .padding(.horizontal, 6)
             } else {
                 ScrollView {
-                    VStack(spacing: 2) {
-                        ForEach(flattened, id: \.node.id) { entry in
-                            Row(
-                                node: entry.node,
-                                path: entry.path,
-                                open: {
-                                    if let text = entry.node.url, let url = URL(string: text) {
-                                        browser.bookmarking = false
-                                        browser.visit(url)
-                                    }
-                                },
-                                forget: { bookmarks.remove(entry.node.id) }
-                            )
-                        }
+                    BookmarkOutline(bookmarks: bookmarks) { url in
+                        browser.bookmarking = false
+                        browser.visit(url)
                     }
                 }
                 .frame(maxHeight: 360)
@@ -298,59 +479,5 @@ struct BookmarksPanel: View {
         .background(Palette.ground, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 1))
         .shadow(color: .black.opacity(0.16), radius: 34, y: 12)
-    }
-
-    private var flattened: [(node: Bookmark, path: String)] {
-        var out: [(Bookmark, String)] = []
-        func walk(_ nodes: [Bookmark], _ path: [String]) {
-            for node in nodes {
-                if node.isFolder {
-                    walk(node.children ?? [], path + [node.title])
-                } else {
-                    out.append((node, path.joined(separator: " / ")))
-                }
-            }
-        }
-        walk(bookmarks.roots, [])
-        return out
-    }
-
-    private struct Row: View {
-        let node: Bookmark
-        let path: String
-        let open: () -> Void
-        let forget: () -> Void
-        @State private var hovering = false
-
-        var body: some View {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(node.title)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Palette.ink)
-                        .lineLimit(1)
-                    if !path.isEmpty {
-                        Text(path)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Palette.faint)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 8)
-                if hovering {
-                    Button("Remove", action: forget)
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.red.opacity(0.7))
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(hovering ? Palette.wash : .clear))
-            .contentShape(Rectangle())
-            .onTapGesture(perform: open)
-            .onHover { hovering = $0 }
-            .animation(Motion.quick, value: hovering)
-        }
     }
 }

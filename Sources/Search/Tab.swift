@@ -162,7 +162,12 @@ final class Tab: ObservableObject, Identifiable {
     var onPick: ((Tab, String, String, String) -> Void)?
     /// The page has a sign-in on it; the page has just sent one.
     var onSignIn: ((Tab) -> Void)?
-    var onCredentials: ((Tab, String, String) -> Void)?
+    /// The caret has entered or left one of the sign-in boxes; where the box
+    /// is, in the web view's points, or nil when it has left.
+    var onField: ((Tab, CGRect?) -> Void)?
+    /// The site the sign-in was sent from — not the one it landed on —
+    /// then the name and the password.
+    var onCredentials: ((Tab, String, String, String) -> Void)?
     var onPickEnd: ((Tab) -> Void)?
     var onPickTrouble: ((Tab, String) -> Void)?
 
@@ -175,6 +180,11 @@ final class Tab: ObservableObject, Identifiable {
     /// A tab that keeps nothing: its own cookies, no history, no place in the
     /// session. Signed in as nobody, and forgotten when it goes.
     let shy: Bool
+
+    /// A tab a script opened through the bench, beside yours. Signed in as
+    /// you, so it sees what you see — but never selected for you, never in
+    /// the session or the history, and gone when the script is done.
+    let bench: Bool
 
     /// The tab whose page opened this one, when a script did. Sign-in flows
     /// hand you back to it when they are done.
@@ -210,8 +220,9 @@ final class Tab: ObservableObject, Identifiable {
         return "New Tab"
     }
 
-    init(shy: Bool = false, configuration: WKWebViewConfiguration? = nil) {
+    init(shy: Bool = false, bench: Bool = false, configuration: WKWebViewConfiguration? = nil) {
         self.shy = shy
+        self.bench = bench
         self.configuration = configuration ?? Web.configuration(shy: shy)
     }
 
@@ -227,11 +238,9 @@ final class Tab: ObservableObject, Identifiable {
         // PageView, and it moves nothing but a disc.
         web.allowsBackForwardNavigationGestures = false
         web.onPull = { [weak self] pull in self?.pull = pull }
-        // Pages follow the appearance of the view they are drawn in, so on a
-        // Mac in dark mode a site that honours prefers-color-scheme turns dark
-        // under a strip that is always white. Everything this browser draws is
-        // light; the page is told the same.
-        web.appearance = NSAppearance(named: .aqua)
+        // Pages follow the appearance of the window they are drawn in, and the
+        // window follows Settings › Appearance — so a site that honours
+        // prefers-color-scheme goes dark with the frame, and not otherwise.
         // Right-click, Inspect Element. The public way to say so since 13.3.
         if #available(macOS 13.3, *) { web.isInspectable = true }
         web.navigationDelegate = delegate
@@ -364,8 +373,70 @@ final class Tab: ObservableObject, Identifiable {
 
     func foundSignIn() { onSignIn?(self) }
 
+    /// From the page, in CSS pixels; passed on in points. Page zoom is the
+    /// only scale between the two that matters here.
+    func fieldFocused(_ rect: CGRect?) {
+        guard let rect else {
+            onField?(self, nil)
+            return
+        }
+        let zoom = built?.pageZoom ?? 1
+        onField?(self, CGRect(
+            x: rect.minX * zoom, y: rect.minY * zoom,
+            width: rect.width * zoom, height: rect.height * zoom
+        ))
+    }
+
+    /// A name and password the page has just sent — held, not yet offered.
+    /// Whether the sign-in worked is only known afterwards: a page that
+    /// comes back without a password box took it, one that still has the
+    /// box refused it, and only the first is worth remembering.
+    private var sent: (host: String, user: String, password: String, at: Date)?
+
     func sentSignIn(user: String, password: String) {
-        onCredentials?(self, user, password)
+        // The host now, while the page is still the sign-in page: a moment
+        // later it may be somewhere else entirely, and that is not where
+        // the password belongs.
+        guard let host = address?.host()?.lowercased() else { return }
+        let bare = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        sent = (bare, user, password, Date())
+    }
+
+    /// The page has moved on — a new document has loaded, or the sign-in
+    /// fields have gone. If a password went out recently and there is no
+    /// longer a box for it, that is a sign-in that took.
+    ///
+    /// A new document is judged at once. Fields that a page removed by
+    /// itself are given a moment first: a sign-in built into the page closes
+    /// its form the instant you press the button and puts it back if the
+    /// server says no — and offering in between is offering a password that
+    /// may be wrong.
+    func settleSignIn(navigated: Bool = true) {
+        guard let sent else { return }
+        guard Date().timeIntervalSince(sent.at) < 45 else {
+            self.sent = nil
+            return
+        }
+        guard navigated else {
+            let stamp = sent.at
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                // Only if nothing newer went out in the meantime.
+                guard let self, self.sent?.at == stamp else { return }
+                self.settleSignIn(navigated: true)
+            }
+            return
+        }
+        web.evaluateJavaScript("!!(window.__officeForms && window.__officeForms.hasPassword())") { [weak self] still, _ in
+            MainActor.assumeIsolated {
+                guard let self, let sent = self.sent else { return }
+                // The box is still there: a refused sign-in, or the second
+                // step of one. Kept for a moment longer, in case the page is
+                // still on its way.
+                if (still as? Bool) == true { return }
+                self.sent = nil
+                self.onCredentials?(self, sent.host, sent.user, sent.password)
+            }
+        }
     }
 
     /// Puts a remembered name and password where a person would have typed
@@ -457,6 +528,41 @@ final class Tab: ObservableObject, Identifiable {
         built.load(URLRequest(url: URL(string: "about:blank")!))
     }
 
+    /// Set when WebKit said the page's process went away while nobody was
+    /// looking at the tab. Coming back to it loads the page again rather
+    /// than showing the white that is left.
+    var stale = false
+
+    /// Coming back to a tab. A page whose process was taken away out of sight
+    /// — memory pressure, a long sleep — comes back as a white rectangle, and
+    /// WebKit does not always say so for a view that was out of its window.
+    /// Asked anything at all, the page answers with one particular error, and
+    /// the answer to that is to load it again.
+    func revive() {
+        if stale {
+            stale = false
+            failure = nil
+            web.reload()
+            return
+        }
+        guard !isBlank, pending == nil, !loading, failure == nil else { return }
+        // A view with no document behind an address: whatever emptied it, the
+        // address is what to show, and reload alone would have nothing to do.
+        if hollow, let address {
+            web.load(URLRequest(url: address))
+            return
+        }
+        web.evaluateJavaScript("document.readyState") { [weak self] _, error in
+            MainActor.assumeIsolated {
+                guard let self, let error = error as NSError? else { return }
+                guard error.domain == WKErrorDomain,
+                      error.code == WKError.webContentProcessTerminated.rawValue
+                else { return }
+                self.web.reload()
+            }
+        }
+    }
+
     /// Opened for the first time since the app started.
     func wake() {
         guard let url = pending else { return }
@@ -481,7 +587,23 @@ final class Tab: ObservableObject, Identifiable {
 
     func touch() { touched = Date() }
 
-    func reload() { web.reloadFromOrigin() }
+    /// True when the web view holds nothing — never loaded, or emptied —
+    /// while the tab still names a page. The white page, in other words.
+    var hollow: Bool {
+        guard let built else { return address != nil }
+        guard let there = built.url else { return address != nil }
+        return there.absoluteString == "about:blank" && pending == nil && address != nil
+    }
+
+    /// Again from the network. A view that has lost its document is given
+    /// the address back instead: there is nothing else for it to reload.
+    func reload() {
+        if hollow, let address {
+            web.load(URLRequest(url: address))
+        } else {
+            web.reloadFromOrigin()
+        }
+    }
     func stop() { web.stopLoading() }
     /// Straight through, every time. A page that has to be fetched again is
     /// fetched again — nothing is kept behind to make that look otherwise.
@@ -498,6 +620,7 @@ final class Tab: ObservableObject, Identifiable {
         onPick = nil
         onPickEnd = nil
         onSignIn = nil
+        onField = nil
         onCredentials = nil
         guard let web = built else { return }
         let controller = web.configuration.userContentController

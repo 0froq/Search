@@ -32,12 +32,10 @@ final class Browser: NSObject, ObservableObject {
     // MARK: - bookmarks
 
     let bookmarks = Bookmarks()
-    /// The list of them, for taking things out.
+    /// The full list, for taking things out.
     @Published var bookmarking = false
-    /// Bumped to pop the menu from the button.
-    @Published private(set) var bookmarkMenu = 0
-
-    func showBookmarks() { bookmarkMenu += 1 }
+    /// The dropdown off the button.
+    @Published var bookmarksOpen = false
 
     /// ⇧⌘B. The page you are on, at the end of the list.
     func bookmarkCurrent() {
@@ -68,15 +66,6 @@ final class Browser: NSObject, ObservableObject {
             }
         }
         return count
-    }
-
-    /// The menu the button and the sidebar pop.
-    func bookmarksMenu() -> NSMenu {
-        bookmarks.menu(
-            open: { [weak self] url in self?.visit(url) },
-            manage: { [weak self] in self?.bookmarking = true },
-            addHere: { [weak self] in self?.bookmarkCurrent() }
-        )
     }
 
     /// ⇧⌘S. The same tabs, down the left or across the top.
@@ -245,9 +234,23 @@ final class Browser: NSObject, ObservableObject {
         let changed: Bool
     }
 
-    /// A sign-in with more than one account kept for it: the page is not
-    /// filled until you say which.
-    @Published private(set) var choosing: [Login] = []
+    /// The accounts kept for the site whose sign-in box has the caret, and
+    /// where that box is — a list hangs from it, and a click fills the form.
+    /// Nothing is put into a page until you have pointed at it.
+    @Published private(set) var suggesting: Suggesting?
+
+    struct Suggesting: Equatable {
+        let tab: Tab.ID
+        let spot: CGRect
+        let logins: [Login]
+    }
+    /// Set once you have picked, so the list doesn't come straight back for
+    /// the box you are still in. Cleared when the caret leaves the boxes.
+    private var pickedInto: Tab.ID?
+    /// The list is taken down a beat after the caret leaves, not the same
+    /// instant: clicking a row can take the caret out of the page first, and
+    /// a list that vanished on the way down would never be clicked.
+    private var lowering: DispatchWorkItem?
 
     func keepOffer() {
         guard let offer = offering else { return }
@@ -272,17 +275,19 @@ final class Browser: NSObject, ObservableObject {
         announce("Never for \(offer.login.host)")
     }
 
-    /// One of several, picked by name.
+    /// One of the accounts in the list, picked by name.
     func choose(_ login: Login) {
-        choosing = []
-        guard let tab = active else { return }
+        lowering?.cancel()
+        guard let tab = tabs.first(where: { $0.id == suggesting?.tab }) ?? active else { return }
+        suggesting = nil
+        pickedInto = tab.id
         tab.fill(user: login.user, password: login.password) { [weak self] worked in
             if !worked { self?.announce("Couldn't find the sign-in fields anymore") }
         }
         Vault.touch(login)
     }
 
-    func dropChoice() { choosing = [] }
+    func dropChoice() { suggesting = nil }
 
     // The list of what is kept.
 
@@ -608,6 +613,7 @@ final class Browser: NSObject, ObservableObject {
         super.init()
         Shield.shared.enabled = prefs.shielded
         Shield.shared.compile()
+        if prefs.bench { Bench.shared.start(for: self) }
         welcoming = !prefs.welcomed
         // Once a day, quietly: is there a newer one?
         Updater.shared.checkIfDue { [weak self] line in self?.announce(line) }
@@ -726,6 +732,15 @@ final class Browser: NSObject, ObservableObject {
             }
             .store(in: &bag)
 
+        prefs.$bench
+            .dropFirst()
+            .sink { [weak self] on in
+                guard let self else { return }
+                if on { Bench.shared.start(for: self) } else { Bench.shared.stop() }
+                announce(on ? "Scripts can drive Search — see ./bench" : "The bench is closed")
+            }
+            .store(in: &bag)
+
         prefs.$passkeys
             .dropFirst()
             .sink { [weak self] on in
@@ -772,7 +787,7 @@ final class Browser: NSObject, ObservableObject {
             now: now,
             .init(
                 tabs: tabs.compactMap { tab in
-                    guard !tab.shy else { return nil }
+                    guard !tab.shy, !tab.bench else { return nil }
                     // A sleeping tab holds its address in `pending`; asking for
                     // it there too means a pin can never be written out of
                     // existence by whatever its web view happens to be showing.
@@ -829,7 +844,7 @@ final class Browser: NSObject, ObservableObject {
     func select(_ tab: Tab) {
         cancelTabEdit()
         summoning = false
-        choosing = []
+        suggesting = nil
         guard tab.id != activeID else { return }
         // Coming back to the tab whose video is out brings it home first, so
         // it is never lifted and landed in the same breath.
@@ -839,6 +854,8 @@ final class Browser: NSObject, ObservableObject {
         tab.touch()
         // A tab brought back from last time opens the first time you look at it.
         tab.wake()
+        // And one whose page died while you were away is loaded again.
+        tab.revive()
         rememberSession()
         editing = false
         typed = ""
@@ -1003,6 +1020,17 @@ final class Browser: NSObject, ObservableObject {
         return tab
     }
 
+    /// A page for the bench: at the end of the row, behind whatever you are
+    /// looking at, and marked as not yours.
+    @discardableResult
+    func benchOpen(_ url: URL) -> Tab {
+        let tab = Tab(bench: true)
+        prepare(tab)
+        tabs.append(tab)
+        tab.go(to: url)
+        return tab
+    }
+
     /// A link from another app. A blank tab with nothing typed in it takes
     /// the page rather than staying behind as an empty one; otherwise the
     /// page gets a tab of its own, in front.
@@ -1140,25 +1168,33 @@ final class Browser: NSObject, ObservableObject {
         }
         tab.onPickEnd = { [weak self] _ in self?.veiling = false }
 
-        // A sign-in on the page, and something kept for the site. One account
-        // goes straight in; more than one is a question.
-        tab.onSignIn = { [weak self] tab in
-            guard let self, prefs.fillsPasswords, tab.id == activeID,
+        // The caret in a sign-in box: the accounts kept for this site hang
+        // from the box, and go when the caret does. Nothing is filled on
+        // its own — the way Safari does it, and what a person expects.
+        tab.onField = { [weak self] tab, spot in
+            guard let self else { return }
+            guard let spot else {
+                if pickedInto == tab.id { pickedInto = nil }
+                guard suggesting?.tab == tab.id else { return }
+                lowering?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, suggesting?.tab == tab.id else { return }
+                    suggesting = nil
+                }
+                lowering = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+                return
+            }
+            lowering?.cancel()
+            guard prefs.fillsPasswords, tab.id == activeID, pickedInto != tab.id,
                   let host = curtain.host(of: tab.address)
             else { return }
-            let known = Vault.logins(matching: host)
-            guard !known.isEmpty else { return }
-            if known.count == 1, let only = known.first {
-                tab.fill(user: only.user, password: only.password)
-                Vault.touch(only)
-            } else {
-                choosing = Array(known.prefix(4))
-            }
+            let known = Array(Vault.logins(matching: host).prefix(5))
+            suggesting = known.isEmpty ? nil : Suggesting(tab: tab.id, spot: spot, logins: known)
         }
 
-        tab.onCredentials = { [weak self] tab, user, password in
+        tab.onCredentials = { [weak self] tab, host, user, password in
             guard let self, prefs.savesPasswords, !password.isEmpty, !tab.shy,
-                  let host = curtain.host(of: tab.address),
                   !Vault.isNever(host)
             else { return }
             let known = Vault.logins(for: host)
@@ -1588,11 +1624,13 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let tab = tab(for: webView), let url = tab.address else { return }
+        // A page that arrived after a password went out: did the sign-in take?
+        tab.settleSignIn()
         // The icon is asked for whether or not the tab is showing one: it may
         // be turned on a moment later, and a tab that then has to wait for a
         // fetch looks broken.
         Favicons.shared.fetch(for: tab)
-        guard !tab.shy else { return }
+        guard !tab.shy, !tab.bench else { return }
         history.record(url, title: tab.title)
     }
 

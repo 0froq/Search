@@ -201,8 +201,10 @@ struct SideBar: View {
             Door(icon: "slider.horizontal.3", on: browser.tuning, help: "Settings   ⌘,") {
                 browser.tuning.toggle()
             }
-            Door(icon: "bookmark", help: "Bookmarks") { browser.showBookmarks() }
-                .background(MenuAnchor(pop: browser.bookmarkMenu) { browser.bookmarksMenu() })
+            Door(icon: "bookmark", help: "Bookmarks") { browser.bookmarksOpen.toggle() }
+                .popover(isPresented: $browser.bookmarksOpen, arrowEdge: .trailing) {
+                    BookmarksDropdown(browser: browser, bookmarks: browser.bookmarks)
+                }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
@@ -279,6 +281,12 @@ private struct SideRow: View {
             } else {
                 if prefs.glyph == .icons, !tab.isBlank {
                     Mark(icon: tab.icon, letter: tab.monogram, size: 15)
+                }
+                if tab.bench {
+                    // A script's tab, not yours.
+                    Image(systemName: "flask")
+                        .font(.system(size: 9))
+                        .foregroundStyle(colour.opacity(0.7))
                 }
                 if tab.shy {
                     Image(systemName: "eye.slash")

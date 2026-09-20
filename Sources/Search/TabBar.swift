@@ -77,12 +77,13 @@ struct TabBar: View {
                     Spacer(minLength: 0)
 
                     // Back, forward, reload, and the bookmarks, at the far end
-                    // of the row. The menu hangs from the last one, folders
-                    // opening on hover.
+                    // of the row. The dropdown hangs from the last one.
                     Helm(browser: browser)
                         .padding(.trailing, 8)
-                    Door(icon: "bookmark", help: "Bookmarks") { browser.showBookmarks() }
-                        .background(MenuAnchor(pop: browser.bookmarkMenu) { browser.bookmarksMenu() })
+                    Door(icon: "bookmark", help: "Bookmarks") { browser.bookmarksOpen.toggle() }
+                        .popover(isPresented: $browser.bookmarksOpen, arrowEdge: .bottom) {
+                            BookmarksDropdown(browser: browser, bookmarks: browser.bookmarks)
+                        }
                 }
                 // The traffic lights are the system's. The row starts after
                 // them and stays there — nothing here moves to get out of
@@ -311,6 +312,12 @@ private struct TabPill: View {
                 if prefs.glyph == .icons, !tab.isBlank {
                     Mark(icon: tab.icon, letter: tab.monogram, size: 15)
                 }
+                if tab.bench {
+                    // A script's tab, not yours.
+                    Image(systemName: "flask")
+                        .font(.system(size: 9))
+                        .foregroundStyle(colour.opacity(0.7))
+                }
                 if tab.shy {
                     // Quiet, and only on the tabs that keep nothing.
                     Image(systemName: "eye.slash")
@@ -426,7 +433,7 @@ struct TabAddressField: NSViewRepresentable {
         field.drawsBackground = false
         field.focusRingType = .none
         field.font = .systemFont(ofSize: 12.5)
-        field.textColor = NSColor(Palette.ink)
+        field.textColor = Palette.NS.ink
         field.cell?.usesSingleLineMode = true
         field.cell?.wraps = false
         field.stringValue = browser.tabDraft
@@ -446,7 +453,7 @@ struct TabAddressField: NSViewRepresentable {
             guard let editor = field.currentEditor() as? NSTextView else { return }
             editor.selectedTextAttributes = [
                 .backgroundColor: NSColor(Palette.ink.opacity(0.11)),
-                .foregroundColor: NSColor(Palette.ink),
+                .foregroundColor: Palette.NS.ink,
             ]
             editor.selectAll(nil)
         }
@@ -582,7 +589,7 @@ struct PinField: NSViewRepresentable {
         field.focusRingType = .none
         field.alignment = .center
         field.font = .systemFont(ofSize: 12, weight: .medium)
-        field.textColor = NSColor(Palette.ink)
+        field.textColor = Palette.NS.ink
         field.cell?.usesSingleLineMode = true
         field.cell?.wraps = false
         field.stringValue = tab.pin ?? ""
@@ -603,7 +610,7 @@ struct PinField: NSViewRepresentable {
             guard let editor = field.currentEditor() as? NSTextView else { return }
             editor.selectedTextAttributes = [
                 .backgroundColor: NSColor(Palette.ink.opacity(0.12)),
-                .foregroundColor: NSColor(Palette.ink),
+                .foregroundColor: Palette.NS.ink,
             ]
             // The guessed letter arrives selected, so one keystroke replaces it
             // and doing nothing keeps it.

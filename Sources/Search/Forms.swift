@@ -30,8 +30,18 @@ final class FormRelay: NSObject, WKScriptMessageHandler {
                     user: body["user"] as? String ?? "",
                     password: body["password"] as? String ?? ""
                 )
+            case "settled":
+                tab?.settleSignIn(navigated: false)
             case "focus":
                 tab?.typing = body["typing"] as? Bool ?? false
+                // Which sign-in box the caret is in, and where it sits on the
+                // page — so a list of accounts can hang from it.
+                if let rect = body["rect"] as? [String: Double],
+                   let x = rect["x"], let y = rect["y"], let w = rect["w"], let h = rect["h"] {
+                    tab?.fieldFocused(CGRect(x: x, y: y, width: w, height: h))
+                } else {
+                    tab?.fieldFocused(nil)
+                }
             case "fullscreen":
                 tab?.immersed = body["on"] as? Bool ?? false
             default:
@@ -113,21 +123,22 @@ final class FormRelay: NSObject, WKScriptMessageHandler {
           if (both.user && !both.user.value) put(both.user, user);
           put(both.pass, password);
           return true;
-        }
+        },
+        // Whether there is still a sign-in on the page. Asked after a
+        // password went out, to tell a sign-in that took from one refused.
+        hasPassword: function () { return !!pair(); }
       };
 
-      var offered = '';
+      // What is in the boxes when they are sent. Said every time — a click
+      // on "show password" says it too — because the browser only listens
+      // once the page has moved on, and keeps the last thing it heard.
       function offer() {
         var both = pair();
         if (!both || !both.pass.value) return;
-        var user = both.user ? both.user.value : '';
-        // Once per pair of values: a click on "sign in" and the form's own
-        // submit are usually the same event twice.
-        var stamp = user + '|' + both.pass.value;
-        if (stamp === offered) return;
-        offered = stamp;
         window.webkit.messageHandlers.officeForms.postMessage({
-          kind: 'submit', user: user, password: both.pass.value
+          kind: 'submit',
+          user: both.user ? both.user.value : '',
+          password: both.pass.value
         });
       }
 
@@ -158,9 +169,18 @@ final class FormRelay: NSObject, WKScriptMessageHandler {
       // password step of a sign-in that asks for the name first.
       setTimeout(tell, 700);
       setTimeout(tell, 2200);
+      // The boxes going away without a new page — a sign-in done in place —
+      // is the other way a sign-in shows it took.
+      var settling = null;
       new MutationObserver(function () {
-        if (!told) tell();
-        else if (!pair()) told = false;
+        if (!told) { tell(); return; }
+        if (pair()) return;
+        told = false;
+        clearTimeout(settling);
+        settling = setTimeout(function () {
+          if (pair()) return;
+          window.webkit.messageHandlers.officeForms.postMessage({ kind: 'settled' });
+        }, 400);
       }).observe(document.documentElement, { childList: true, subtree: true });
 
       // Whether the caret is somewhere on the page that takes typing.
@@ -180,11 +200,30 @@ final class FormRelay: NSObject, WKScriptMessageHandler {
       }
 
       function caret() {
+        var el = document.activeElement;
+        var both = pair();
+        var rect = null;
+        if (both && el && (el === both.user || el === both.pass)) {
+          var r = el.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) rect = { x: r.left, y: r.top, w: r.width, h: r.height };
+        }
         window.webkit.messageHandlers.officeForms.postMessage({
           kind: 'focus',
-          typing: editable(document.activeElement)
+          typing: editable(el),
+          rect: rect
         });
       }
+
+      // The box moves when the page scrolls or the window changes size, and
+      // whatever hangs from it has to move too. Once a frame at most.
+      var moving = false;
+      function moved() {
+        if (moving) return;
+        moving = true;
+        requestAnimationFrame(function () { moving = false; caret(); });
+      }
+      window.addEventListener('scroll', moved, true);
+      window.addEventListener('resize', moved);
 
       // Going full screen, announced before it happens rather than after.
       //
