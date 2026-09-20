@@ -544,16 +544,30 @@ final class Tab: ObservableObject, Identifiable {
     func recoverFromCrash() {
         guard let address else { return }
         failure = nil
-        web.load(URLRequest(url: address))
+        loadAndVerify(address)
+    }
+
+    /// `web.load`, checked a moment later rather than trusted outright: a
+    /// load handed to WebKit right after a process just died, or as the
+    /// very first thing a freshly-built view is asked to do, doesn't always
+    /// take — no error, no navigation, just a view that goes on sitting on
+    /// about:blank with nothing left to say so. Still there, or still
+    /// answering for a process that's already gone, is asked once more.
+    private func loadAndVerify(_ url: URL) {
+        web.load(URLRequest(url: url))
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self else { return }
+            guard built?.url?.absoluteString != "about:blank" else {
+                web.load(URLRequest(url: url))
+                return
+            }
             web.evaluateJavaScript("document.readyState") { [weak self] _, error in
                 MainActor.assumeIsolated {
                     guard let self, let error = error as NSError? else { return }
                     guard error.domain == WKErrorDomain,
                           error.code == WKError.webContentProcessTerminated.rawValue
                     else { return }
-                    self.web.load(URLRequest(url: address))
+                    self.web.load(URLRequest(url: url))
                 }
             }
         }
@@ -603,7 +617,7 @@ final class Tab: ObservableObject, Identifiable {
         reader = false
         typing = false
         immersed = false
-        web.load(URLRequest(url: url))
+        loadAndVerify(url)
         return true
     }
 
