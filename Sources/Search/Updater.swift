@@ -115,6 +115,20 @@ final class Updater: ObservableObject {
     func checkIfDue(then say: @escaping (String) -> Void) {
         self.say = say
         Swap.sweep()
+        // And again every hour for as long as the app is up — a browser that
+        // is left open for a week would otherwise never look.
+        if clock == nil {
+            clock = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.checkIfDue() }
+            }
+            clock?.tolerance = 60 * 5
+        }
+        checkIfDue()
+    }
+
+    private var clock: Timer?
+
+    private func checkIfDue() {
         let last = Store.settings.object(forKey: lastKey) as? Date ?? .distantPast
         guard Updater.overridden || Date().timeIntervalSince(last) > 60 * 60 * 20 else { return }
         check { _ in }
