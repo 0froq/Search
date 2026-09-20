@@ -1,5 +1,4 @@
 # Search
-*(soon to be renamed Office Search — the Xcode target, bundle ID and this repo will follow once that's done; nothing to do with the code below in the meantime)*
 
 A small, fast WebKit browser for macOS, by [Office Commun](https://officecommun.com).
 
@@ -36,4 +35,4 @@ Issues and pull requests are genuinely welcome — see [CONTRIBUTING.md](CONTRIB
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Do what you want with the code. "Search," "Office Search" and the app icon are Office Commun's; please rename a fork before distributing it under a different name.
+MIT — see [LICENSE](LICENSE). Do what you want with the code. "Search" and the app icon are Office Commun's; please rename a fork before distributing it under a different name.
