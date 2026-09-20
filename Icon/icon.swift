@@ -65,13 +65,13 @@ func draw(_ size: CGFloat) -> NSImage {
     shadow.shadowBlurRadius = 24 * s
     shadow.shadowOffset = NSSize(width: 0, height: -10 * s)
     shadow.set()
-    NSColor(red: 0.09, green: 0.09, blue: 0.09, alpha: 1).setFill()
+    NSColor.white.setFill()
     shape.fill()
     NSGraphicsContext.restoreGraphicsState()
 
-    // The mark, white on the plate, at 80% of its width — the same
-    // confidence a single glyph used to read with.
-    NSColor.white.setFill()
+    // The mark, black on the plate — the same two colours as logo.svg
+    // itself, not a dark plate invented to put a white mark on.
+    NSColor(red: 0.09, green: 0.09, blue: 0.09, alpha: 1).setFill()
     markPath(in: plate, fraction: 0.8).fill()
     return image
 }
