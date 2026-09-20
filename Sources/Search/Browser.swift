@@ -1487,6 +1487,18 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         decidePolicyFor action: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+        // "Download Image", "Download Linked File" from the page's own
+        // context menu, and a link with the `download` attribute all arrive
+        // as an ordinary-looking action with this one flag set. Answered
+        // with `.allow`, as anything else here was, WebKit tries to load it
+        // as if it were the next page — nowhere for that to go, so nothing
+        // happens and nothing says why. `.download` is what turns it into
+        // the `WKDownload` that `didBecome download:` below already knows
+        // what to do with.
+        guard !action.shouldPerformDownload else {
+            decisionHandler(.download)
+            return
+        }
         guard let url = action.request.url, let scheme = url.scheme?.lowercased() else {
             decisionHandler(.allow)
             return
