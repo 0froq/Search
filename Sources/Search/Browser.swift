@@ -1189,6 +1189,7 @@ final class Browser: NSObject, ObservableObject {
             announce("Hidden — ⌘Z puts it back")
         }
         tab.onPickEnd = { [weak self] _ in self?.veiling = false }
+        tab.onImageMenu = { [weak self] tab, url in self?.showImageMenu(for: tab, at: url) }
 
         // The caret in a sign-in box: the accounts kept for this site hang
         // from the box, and go when the caret does. Nothing is filled on

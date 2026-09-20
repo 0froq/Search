@@ -170,10 +170,15 @@ final class Tab: ObservableObject, Identifiable {
     var onCredentials: ((Tab, String, String, String) -> Void)?
     var onPickEnd: ((Tab) -> Void)?
     var onPickTrouble: ((Tab, String) -> Void)?
+    /// Right-click landed on an image. WebKit's own menu offers to copy or
+    /// download it and then, on at least some sites, does neither — see
+    /// ImageMenu.swift for why this is built rather than patched.
+    var onImageMenu: ((Tab, URL) -> Void)?
 
     private let relay = ScrollRelay()
     private let veils_ = VeilRelay()
     private let forms = FormRelay()
+    private let images = ImageRelay()
     private let ears = AudioWatch()
     private var lastY: Double = 0
 
@@ -253,8 +258,10 @@ final class Tab: ObservableObject, Identifiable {
         controller.removeScriptMessageHandler(forName: ScrollRelay.name)
         controller.removeScriptMessageHandler(forName: VeilRelay.name)
         controller.removeScriptMessageHandler(forName: FormRelay.name)
+        controller.removeScriptMessageHandler(forName: ImageRelay.name)
         controller.add(relay, name: ScrollRelay.name)
         controller.add(veils_, name: VeilRelay.name)
+        controller.add(images, name: ImageRelay.name)
         controller.add(forms, name: FormRelay.name)
         Shield.shared.protect(controller)
         built = web
@@ -295,6 +302,7 @@ final class Tab: ObservableObject, Identifiable {
         relay.tab = self
         veils_.tab = self
         forms.tab = self
+        images.tab = self
         ears.watch(web) { [weak self] on in self?.noisy = on }
         return web
     }
@@ -347,6 +355,9 @@ final class Tab: ObservableObject, Identifiable {
         // map's own document can say so.
         controller.addUserScript(
             WKUserScript(source: Swipe.watch, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        )
+        controller.addUserScript(
+            WKUserScript(source: ImageRelay.watch, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
         if !FormRelay.passkeysOffered {
             controller.addUserScript(
