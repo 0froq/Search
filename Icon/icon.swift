@@ -1,7 +1,7 @@
-// The app's icon, drawn rather than exported. For now, and on purpose, a
-// placeholder: an ink plate with the letter the app starts with — the kind of
-// icon a thing wears before it has one. The real one is a design job for a
-// later day.
+// The app's icon, drawn rather than exported: the mark is twelve rectangles
+// — the same shape wherever it appears, in code, and in Office Commun's
+// logo.png — so it stays a crisp vector at every size instead of a raster
+// scaled up to fit.
 //
 // Run by build.sh:  swift Icon/icon.swift <iconset folder>
 // It writes every size macOS asks for; iconutil folds them into one .icns.
@@ -10,6 +10,32 @@ import AppKit
 
 let out = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? "AppIcon.iconset")
 try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+
+/// The mark: twelve bars around a centre, read from Office Commun's
+/// logo.png at 1000×1000 — top-left origin, the way an image reads. Kept
+/// as plain numbers rather than a file so drawing it costs nothing to build
+/// and nothing to bundle. See also Design.swift's `Logomark`, the same
+/// shape drawn for SwiftUI, and search.html's `--mark` SVG for the web.
+let bars: [(x0: CGFloat, y0: CGFloat, x1: CGFloat, y1: CGFloat)] = [
+    (254, 436, 284, 564), (299, 395, 329, 474), (299, 526, 329, 605),
+    (382, 365, 412, 444), (382, 556, 412, 635), (487, 354, 517, 432),
+    (487, 568, 517, 646), (588, 365, 618, 444), (588, 556, 618, 635),
+    (671, 395, 701, 474), (671, 526, 701, 605), (716, 436, 746, 564),
+]
+
+/// The bars, filled into `plate` at `scale` — 1 unit of the 1000-wide source
+/// per point of `scale`, centred on the plate regardless of its size.
+func markPath(in plate: NSRect, scale: CGFloat) -> NSBezierPath {
+    let path = NSBezierPath()
+    for bar in bars {
+        let x = plate.midX + (bar.x0 - 500) * scale
+        let bottom = plate.midY + (500 - bar.y1) * scale
+        let width = (bar.x1 - bar.x0) * scale
+        let height = (bar.y1 - bar.y0) * scale
+        path.append(NSBezierPath(rect: NSRect(x: x, y: bottom, width: width, height: height)))
+    }
+    return path
+}
 
 func draw(_ size: CGFloat) -> NSImage {
     let image = NSImage(size: NSSize(width: size, height: size))
@@ -33,17 +59,10 @@ func draw(_ size: CGFloat) -> NSImage {
     shape.fill()
     NSGraphicsContext.restoreGraphicsState()
 
-    // The letter, in the app's own type, sitting a hair above centre — an
-    // S drawn dead centre reads as low.
-    let letter = NSAttributedString(
-        string: "S",
-        attributes: [
-            .font: NSFont.systemFont(ofSize: 520 * s, weight: .medium),
-            .foregroundColor: NSColor.white,
-        ]
-    )
-    let box = letter.size()
-    letter.draw(at: NSPoint(x: plate.midX - box.width / 2, y: plate.midY - box.height / 2 + 18 * s))
+    // The mark, white on the plate — scaled up from its own 1000-wide
+    // drawing so it reads with the same confidence a single glyph did.
+    NSColor.white.setFill()
+    markPath(in: plate, scale: 1.35 * s).fill()
     return image
 }
 
