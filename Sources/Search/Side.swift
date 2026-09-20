@@ -1,0 +1,438 @@
+import SwiftUI
+
+/// The tabs, down the left instead of across the top.
+///
+/// The same pieces as the strip — the grey that slides to the tab you picked,
+/// the pinned squares, the cross that appears under the pointer — laid out the
+/// other way. The traffic lights keep their corner; the column starts under
+/// them and the page takes the whole height beside it.
+struct SideBar: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject var prefs: Preferences
+
+    @Namespace private var pill
+
+    @State private var dragging: Tab.ID?
+    @State private var from = 0
+    @State private var travel: CGFloat = 0
+    @State private var landing = false
+    /// The width the column had when the edge was picked up.
+    @State private var grabbed: CGFloat?
+    @State private var onEdge = false
+
+    private static let row: CGFloat = 28
+    private static let gap: CGFloat = 2
+    private static let square: CGFloat = 34
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            DragStrip(reserved: 0, below: rowsEnd)
+
+
+            VStack(alignment: .leading, spacing: 0) {
+                // The traffic lights' corner, with back, forward and reload
+                // sitting right of them — the same three doors as the top
+                // bar, moved beside the lights since there's no far end of a
+                // row to put them at in this mode.
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: Metrics.sideLights)
+                    Helm(browser: browser)
+                    Spacer(minLength: 0)
+                }
+                .frame(height: 42)
+
+                if browser.pinnedCount > 0 {
+                    pinned
+                        .padding(.bottom, 10)
+                }
+
+                loose
+                newTab
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+
+            VStack {
+                Spacer()
+                foot
+            }
+        }
+        .frame(width: prefs.sideWidth)
+        .frame(maxHeight: .infinity)
+        .background(landing ? Palette.hover : Palette.ground)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(Palette.hairline).frame(width: 1)
+        }
+        .overlay(alignment: .trailing) { edge }
+        .onDrop(of: [.url, .text], isTargeted: $landing) { providers in
+            browser.take(providers)
+        }
+        .animation(Motion.quick, value: landing)
+        .animation(Motion.glide, value: browser.activeID)
+        .animation(Motion.glide, value: browser.editingTab)
+        .animation(Motion.settle, value: browser.tabs.map(\.id))
+        .animation(Motion.settle, value: browser.pinnedCount)
+    }
+
+    /// The column's edge: pull it to make the column wider or narrower,
+    /// double-click it to put it back. The hairline darkens under the pointer
+    /// so the edge says it can be taken before it is.
+    private var edge: some View {
+        Rectangle()
+            .fill(Palette.ink.opacity(onEdge || grabbed != nil ? 0.18 : 0))
+            .frame(width: onEdge || grabbed != nil ? 2 : 1)
+            .frame(width: 9)
+            .contentShape(Rectangle())
+            .onHover { over in
+                onEdge = over
+                if over { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if grabbed == nil { grabbed = prefs.sideWidth }
+                        let wanted = (grabbed ?? prefs.sideWidth) + value.translation.width
+                        prefs.sideWidth = min(Metrics.sideMax, max(Metrics.sideMin, wanted))
+                    }
+                    .onEnded { _ in grabbed = nil }
+            )
+            .modifier(OneClick(double: true) {
+                withAnimation(Motion.settle) { prefs.sideWidth = Metrics.side }
+            })
+            .animation(Motion.quick, value: onEdge)
+    }
+
+    /// Where the rows stop and the window's own drag area starts. Added up
+    /// from what was drawn rather than measured: a measurement would arrive a
+    /// frame late, and for one frame the whole column would drag the window.
+    private var rowsEnd: CGFloat {
+        let pins = browser.pinnedCount
+        let pinRows = pins == 0 ? 0 : (pins + 4) / 5
+        let pinHeight = pinRows == 0 ? 0
+            : CGFloat(pinRows) * SideBar.square + CGFloat(pinRows - 1) * 4 + 10
+        let loose = CGFloat(browser.tabs.count - pins) * (SideBar.row + SideBar.gap)
+        return 42 + pinHeight + loose + SideBar.row + 8
+    }
+
+    // MARK: - the pinned squares
+
+    private var pinnedTabs: [Tab] { browser.tabs.filter { $0.pin != nil } }
+    private var looseTabs: [Tab] { browser.tabs.filter { $0.pin == nil } }
+
+    /// Five to a row, left-aligned, the way letters go on a page.
+    private var pinned: some View {
+        let tabs = pinnedTabs
+        return VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(stride(from: 0, to: tabs.count, by: 5)), id: \.self) { start in
+                HStack(spacing: 4) {
+                    ForEach(tabs[start..<min(start + 5, tabs.count)]) { tab in
+                        PinSquare(
+                            browser: browser,
+                            prefs: prefs,
+                            tab: tab,
+                            live: tab.id == browser.activeID,
+                            pill: pill
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - the rows
+
+    private var loose: some View {
+        VStack(spacing: SideBar.gap) {
+            ForEach(Array(looseTabs.enumerated()), id: \.element.id) { index, tab in
+                let step = SideBar.row + SideBar.gap
+                let held = dragging == tab.id
+                SideRow(
+                    browser: browser,
+                    prefs: prefs,
+                    tab: tab,
+                    live: tab.id == browser.activeID,
+                    pill: pill,
+                    close: { browser.close(tab) }
+                )
+                .offset(y: held ? travel - CGFloat(index - from) * step : 0)
+                .zIndex(held ? 1 : 0)
+                .shadow(color: .black.opacity(held ? 0.14 : 0), radius: 12, y: 4)
+                .gesture(reorder(tab: tab, index: index, step: step))
+            }
+        }
+    }
+
+    /// Pick a row up and the others make way as it passes them.
+    private func reorder(tab: Tab, index: Int, step: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 5)
+            .onChanged { value in
+                if dragging != tab.id {
+                    dragging = tab.id
+                    from = index
+                }
+                travel = value.translation.height
+                let moved = Int((travel / step).rounded())
+                let target = min(max(0, from + moved), looseTabs.count - 1)
+                if target != index {
+                    // Positions here are among the loose rows; the pinned
+                    // block sits in front of them in the real list.
+                    withAnimation(Motion.settle) {
+                        browser.move(tab, to: target + browser.pinnedCount)
+                    }
+                }
+            }
+            .onEnded { _ in
+                withAnimation(Motion.settle) {
+                    dragging = nil
+                    travel = 0
+                }
+            }
+    }
+
+    private var newTab: some View {
+        Quiet(icon: "plus", title: "New tab", height: SideBar.row) { browser.newTab() }
+            .padding(.top, SideBar.gap)
+    }
+
+    /// One small door at the bottom: the settings.
+    private var foot: some View {
+        HStack(spacing: 2) {
+            Door(icon: "slider.horizontal.3", on: browser.tuning, help: "Settings   ⌘,") {
+                browser.tuning.toggle()
+            }
+            Door(icon: "bookmark", help: "Bookmarks") { browser.showBookmarks() }
+                .background(MenuAnchor(pop: browser.bookmarkMenu) { browser.bookmarksMenu() })
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+    }
+
+}
+
+/// A pinned tab as a square in the block at the top of the column.
+private struct PinSquare: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject var prefs: Preferences
+    @ObservedObject var tab: Tab
+    let live: Bool
+    let pill: Namespace.ID
+
+    @State private var hovering = false
+
+    var body: some View {
+        Group {
+            if browser.editingPin == tab.id {
+                PinField(browser: browser, tab: tab)
+            } else if prefs.glyph == .icons, let icon = tab.icon {
+                Mark(icon: icon, letter: tab.pin ?? "", size: 16, dim: tab.asleep)
+            } else {
+                Text(tab.pin ?? "")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle((live ? Palette.ink : Palette.muted).opacity(tab.asleep ? 0.45 : 1))
+            }
+        }
+        .frame(width: 16, height: 16)
+        .frame(width: 34, height: 34)
+        .background {
+            if live {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Palette.wash)
+                    .matchedGeometryEffect(id: "live", in: pill)
+            } else {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(hovering ? Palette.hover : Palette.wash.opacity(0.55))
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .modifier(OneClick(double: live) {
+            if live { browser.editLetter(tab) } else { browser.select(tab) }
+        })
+        .onHover { hovering = $0 }
+        .contextMenu { TabMenu(browser: browser, tab: tab, close: { browser.close(tab) }) }
+        .help(tab.label)
+        .animation(Motion.quick, value: hovering)
+        .transition(.scale(scale: 0.8).combined(with: .opacity))
+    }
+}
+
+/// One tab, as a line in the column.
+private struct SideRow: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject var prefs: Preferences
+    @ObservedObject var tab: Tab
+    let live: Bool
+    let pill: Namespace.ID
+    let close: () -> Void
+
+    @State private var hovering = false
+    @State private var shake: CGFloat = 0
+
+    private var editing: Bool { browser.editingTab == tab.id }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if editing {
+                TabAddressField(browser: browser)
+                    .frame(height: 16)
+            } else {
+                if prefs.glyph == .icons, !tab.isBlank {
+                    Mark(icon: tab.icon, letter: tab.monogram, size: 15)
+                }
+                if tab.shy {
+                    Image(systemName: "eye.slash")
+                        .font(.system(size: 9))
+                        .foregroundStyle(colour.opacity(0.7))
+                }
+                Text(tab.label)
+                    .font(.system(size: 12.5))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(colour)
+            }
+
+            Spacer(minLength: 2)
+
+            ZStack {
+                if hovering, !editing {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(Palette.muted)
+                        .frame(width: 15, height: 15)
+                        .background(Palette.ink.opacity(0.07), in: Circle())
+                        .transition(.opacity)
+                } else if tab.loading {
+                    Ring().transition(.opacity)
+                } else if tab.noisy {
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Palette.muted)
+                        .transition(.opacity)
+                }
+            }
+            .frame(width: editing ? 0 : 15, height: 15)
+            .opacity(editing ? 0 : 1)
+            .overlay {
+                if !editing {
+                    Color.clear
+                        .frame(width: 30, height: 28)
+                        .contentShape(Rectangle())
+                        .onTapGesture { if hovering { close() } }
+                }
+            }
+            .animation(Motion.quick, value: hovering)
+            .animation(Motion.quick, value: tab.loading)
+            .animation(Motion.quick, value: tab.noisy)
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, editing ? 10 : 7)
+        .frame(height: 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background { ground }
+        .modifier(Shake(travel: shake))
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .modifier(OneClick(double: false) {
+            if live { browser.beginTabEdit(tab) } else { browser.select(tab) }
+        })
+        .onHover { hovering = $0 }
+        .contextMenu { TabMenu(browser: browser, tab: tab, close: close) }
+        .animation(Motion.quick, value: hovering)
+        .animation(Motion.glide, value: editing)
+        .onChange(of: browser.refusals) { _, _ in
+            guard editing else { return }
+            shake = 0
+            withAnimation(.easeOut(duration: 0.5)) { shake = 1 }
+        }
+        .transition(.scale(scale: 0.94, anchor: .leading).combined(with: .opacity))
+    }
+
+    @ViewBuilder
+    private var ground: some View {
+        if live {
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Palette.wash)
+                GeometryReader { geo in
+                    Rectangle()
+                        .fill(Palette.ink.opacity(0.055))
+                        .frame(width: geo.size.width * tab.reading)
+                        .animation(.easeOut(duration: 0.15), value: tab.reading)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .matchedGeometryEffect(id: "live", in: pill)
+        } else if hovering {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Palette.hover)
+        }
+    }
+
+    private var colour: Color {
+        if live { return Palette.ink }
+        return hovering ? Palette.ink.opacity(0.7) : Palette.muted
+    }
+}
+
+/// A row that is an action rather than a page. Quiet until the pointer is on it.
+struct Quiet: View {
+    let icon: String
+    let title: String
+    var height: CGFloat = 28
+    let act: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: act) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .medium))
+                    .frame(width: 15)
+                Text(title)
+                    .font(.system(size: 12.5))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(hovering ? Palette.ink.opacity(0.7) : Palette.faint)
+            .padding(.leading, 10)
+            .frame(height: height)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(hovering ? Palette.hover : .clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(Motion.quick, value: hovering)
+    }
+}
+
+/// A small square holding one symbol. Lit when what it opens is open.
+struct Door: View {
+    let icon: String
+    var on = false
+    var help = ""
+    let act: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: act) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(on ? Palette.ink : (hovering ? Palette.ink.opacity(0.7) : Palette.muted))
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(on ? Palette.wash : (hovering ? Palette.hover : .clear))
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+        .animation(Motion.quick, value: hovering)
+        .animation(Motion.quick, value: on)
+    }
+}
