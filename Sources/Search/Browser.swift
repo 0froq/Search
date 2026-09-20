@@ -732,6 +732,23 @@ final class Browser: NSObject, ObservableObject {
             }
             .store(in: &bag)
 
+        // The look changes — from Settings, or from the Mac while set to
+        // System — and the icons a site keeps for each scheme change with it.
+        // A beat after, so the appearance has actually turned over.
+        prefs.$look
+            .dropFirst()
+            .sink { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.relook() }
+            }
+            .store(in: &bag)
+        DistributedNotificationCenter.default().publisher(for: Notification.Name("AppleInterfaceThemeChangedNotification"))
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard self?.prefs.look == .system else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.relook() }
+            }
+            .store(in: &bag)
+
         prefs.$bench
             .dropFirst()
             .sink { [weak self] on in
@@ -780,6 +797,10 @@ final class Browser: NSObject, ObservableObject {
                 announce(on ? "Autocorrect on" : "Autocorrect off")
             }
             .store(in: &bag)
+    }
+
+    private func relook() {
+        Favicons.shared.relook(tabs.filter { !$0.asleep })
     }
 
     private func writeSession(now: Bool = false) {

@@ -22,14 +22,48 @@ final class Favicons {
     private var missing: Set<String> = []
 
     private static var folder: URL { Store.folder.appendingPathComponent("icons", isDirectory: true) }
-    private static func file(_ host: String) -> URL { folder.appendingPathComponent(host + ".png") }
+    private static func file(_ key: String) -> URL { folder.appendingPathComponent(key + ".png") }
 
-    /// What is already known, and nothing fetched.
+    /// Whether the chrome is dark right now. A site that declares an icon
+    /// for `prefers-color-scheme: dark` is asked for that one, and it is
+    /// kept apart from the light one, so switching looks switches icons.
+    static var dark: Bool {
+        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    /// The name an icon is kept under: the host, with a suffix for the dark
+    /// variant a site offered. Sites without one keep one file for both.
+    private static func key(_ host: String, dark: Bool) -> String { dark ? host + "@dark" : host }
+
+    /// What is already known, and nothing fetched. In the dark, the dark
+    /// variant when there is one, the ordinary icon otherwise.
     func cached(_ host: String) -> NSImage? {
-        if let hit = memory[host] { return hit }
-        guard let image = NSImage(contentsOf: Favicons.file(host)) else { return nil }
-        memory[host] = image
+        if Favicons.dark, let hit = known(Favicons.key(host, dark: true)) { return hit }
+        return known(host)
+    }
+
+    private func known(_ key: String) -> NSImage? {
+        if let hit = memory[key] { return hit }
+        guard let image = NSImage(contentsOf: Favicons.file(key)) else { return nil }
+        memory[key] = image
         return image
+    }
+
+    private static func fresh(_ key: String) -> Bool {
+        guard let stamp = try? file(key).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        else { return false }
+        return Date().timeIntervalSince(stamp) < 7 * 86_400
+    }
+
+    /// The look changed: every tab puts on the icon that goes with it, and
+    /// asks again for one where the site may have a variant not yet seen.
+    func relook(_ tabs: [Tab]) {
+        missing = []
+        for tab in tabs {
+            guard let host = tab.address?.host()?.lowercased() else { continue }
+            tab.icon = cached(host)
+            fetch(for: tab)
+        }
     }
 
     /// An icon from somewhere else — another browser's cache, at import —
@@ -48,9 +82,11 @@ final class Favicons {
               url.scheme?.hasPrefix("http") == true
         else { return }
 
-        if let stamp = try? Favicons.file(host).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-           Date().timeIntervalSince(stamp) < 7 * 86_400,
-           let known = cached(host) {
+        let dark = Favicons.dark
+        // Fresh and right for this look: nothing to do. In the dark, a fresh
+        // light icon is not enough on its own — the site may offer a dark
+        // one that has never been asked for — so the page is asked.
+        if Favicons.fresh(Favicons.key(host, dark: dark)), let known = known(Favicons.key(host, dark: dark)) {
             tab.icon = known
             return
         }
@@ -61,14 +97,36 @@ final class Favicons {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let declared = (answer as? [[String: String]]) ?? []
-                let candidates = Favicons.rank(declared, page: url)
+                let offersDark = declared.contains { Favicons.media($0["media"]) == .dark }
+                let wantDark = dark && offersDark
+                let key = Favicons.key(host, dark: wantDark)
+                // No dark variant here after all, and the ordinary one is
+                // fresh: it is the one to wear.
+                if !wantDark, Favicons.fresh(key), let known = self.known(key) {
+                    tab?.icon = known
+                    self.busy.remove(host)
+                    return
+                }
+                let candidates = Favicons.rank(declared, page: url, dark: wantDark)
                 let shy = tab?.shy ?? false
-                Task { await self.download(candidates, host: host, shy: shy) }
+                Task { await self.download(candidates, host: host, key: key, shy: shy) }
             }
         }
     }
 
-    private func download(_ candidates: [URL], host: String, shy: Bool) async {
+    private enum Scheme { case any, light, dark }
+
+    /// What a `media` attribute says about the scheme, if anything.
+    private static func media(_ value: String?) -> Scheme {
+        let text = (value ?? "").lowercased()
+        if text.contains("prefers-color-scheme") {
+            if text.contains("dark") { return .dark }
+            if text.contains("light") { return .light }
+        }
+        return .any
+    }
+
+    private func download(_ candidates: [URL], host: String, key: String, shy: Bool) async {
         defer { busy.remove(host) }
         let session = URLSession(configuration: {
             let config = URLSessionConfiguration.ephemeral
@@ -81,8 +139,8 @@ final class Favicons {
                   data.count > 60, data.count < 2_000_000
             else { continue }
             guard let image = await Favicons.square(data) else { continue }
-            memory[host] = image
-            if !shy { Favicons.keep(image, for: host) }
+            memory[key] = image
+            if !shy { Favicons.keep(image, for: key) }
             arrived?(host, image)
             return
         }
@@ -116,12 +174,12 @@ final class Favicons {
         }.value
     }
 
-    private static func keep(_ image: NSImage, for host: String) {
+    private static func keep(_ image: NSImage, for key: String) {
         guard let tiff = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:])
         else { return }
-        let file = Favicons.file(host)
+        let file = Favicons.file(key)
         DispatchQueue.global(qos: .utility).async {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try? png.write(to: file, options: .atomic)
@@ -131,7 +189,7 @@ final class Favicons {
     /// Best first. A crisp icon around 32–64 pixels is what a tab wants; the
     /// touch icon is a fine second; the file at the root is the fallback every
     /// site has had since 1999.
-    private static func rank(_ declared: [[String: String]], page: URL) -> [URL] {
+    private static func rank(_ declared: [[String: String]], page: URL, dark: Bool) -> [URL] {
         var scored: [(URL, Int)] = []
         for entry in declared {
             guard let href = entry["href"], let url = URL(string: href),
@@ -140,6 +198,10 @@ final class Favicons {
             let rel = entry["rel"] ?? ""
             let sizes = entry["sizes"] ?? ""
             let type = entry["type"] ?? ""
+            // An icon meant for the other scheme is the last resort; one
+            // meant for this scheme comes first whatever its size.
+            let scheme = media(entry["media"])
+            if scheme == (dark ? .light : .dark) { continue }
             var score = 25
             if rel.contains("apple-touch") { score = 40 }
             if let px = sizes.split(separator: " ").compactMap({ Int($0.split(separator: "x").first ?? "") }).max() {
@@ -152,6 +214,7 @@ final class Favicons {
                 }
             }
             if sizes == "any" || type.contains("svg") || url.pathExtension.lowercased() == "svg" { score = 35 }
+            if scheme != .any { score += 40 }
             scored.append((url, score))
         }
         var list = scored.sorted { $0.1 > $1.1 }.map(\.0)
@@ -175,7 +238,8 @@ final class Favicons {
           href: l.href,
           rel: rel,
           sizes: (l.getAttribute('sizes') || '').toLowerCase(),
-          type: (l.getAttribute('type') || '').toLowerCase()
+          type: (l.getAttribute('type') || '').toLowerCase(),
+          media: (l.getAttribute('media') || '').toLowerCase()
         });
       }
       return out;

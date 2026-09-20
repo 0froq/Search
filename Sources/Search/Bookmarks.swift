@@ -429,55 +429,36 @@ struct BookmarksPanel: View {
     @ObservedObject var bookmarks: Bookmarks
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("Bookmarks")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Palette.faint)
-                    .textCase(.uppercase)
-                    .tracking(0.6)
-                Spacer(minLength: 0)
-                Text("\(bookmarks.count)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Palette.faint)
-            }
-            .padding(.horizontal, 6)
-            .padding(.bottom, 10)
-
+        Plate("Bookmarks", width: 600, close: { browser.bookmarking = false }) {
             if bookmarks.isEmpty {
-                Text("Nothing kept yet. Bring yours in below, or add this page with ⇧⌘B.")
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Palette.muted)
-                    .padding(.horizontal, 6)
+                Card { Nothing("Nothing kept yet. Add this page with ⇧⌘B, or bring yours in below.") }
             } else {
-                ScrollView {
-                    BookmarkOutline(bookmarks: bookmarks) { url in
-                        browser.bookmarking = false
-                        browser.visit(url)
+                ScrollView(showsIndicators: false) {
+                    Card {
+                        BookmarkOutline(bookmarks: bookmarks) { url in
+                            browser.bookmarking = false
+                            browser.visit(url)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 6)
                     }
+                    .padding(.bottom, 2)
                 }
-                .frame(maxHeight: 360)
+                .frame(maxHeight: 440)
             }
-
-            Divider().overlay(Palette.hairline).padding(.vertical, 12)
-
-            HStack(spacing: 6) {
+        } foot: {
+            HStack(spacing: 8) {
+                Text("Bring in from")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Palette.muted)
                 ForEach(Chromium.installed()) { source in
                     Pill(source.name) { browser.takeBookmarks(from: source) }
                 }
                 Spacer()
-                Button("Done") { browser.bookmarking = false }
-                    .buttonStyle(.plain)
+                Text(bookmarks.count == 1 ? "1 bookmark" : "\(bookmarks.count) bookmarks")
                     .font(.system(size: 12))
                     .foregroundStyle(Palette.muted)
-                    .keyboardShortcut(.cancelAction)
             }
-            .padding(.horizontal, 6)
         }
-        .padding(16)
-        .frame(width: 420, alignment: .leading)
-        .background(Palette.ground, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.16), radius: 34, y: 12)
     }
 }

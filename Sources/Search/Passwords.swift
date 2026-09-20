@@ -12,158 +12,89 @@ struct PasswordsPanel: View {
     @State private var importing: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            head
-            search
+        Plate("Passwords", width: 620, close: { browser.managing = false }) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 10) {
+                    Hunt(text: $browser.hunting, prompt: "Search sites and accounts", focus: $hunting)
+                    Pill(adding ? "Cancel" : "Add", filled: !adding) { adding.toggle() }
+                }
 
-            if browser.shownSites.isEmpty {
-                Text(browser.saved.isEmpty
-                     ? "Nothing kept yet. Bring yours in from another browser below."
-                     : "Nothing matches.")
-                    .font(.system(size: 12.5))
+                if adding {
+                    Card { AddForm(browser: browser) { adding = false } }
+                        .transition(.opacity)
+                }
+
+                if browser.shownSites.isEmpty {
+                    Card {
+                        Nothing(browser.saved.isEmpty
+                                ? "Nothing kept yet. Sign in somewhere and say yes, or bring yours in below."
+                                : "Nothing matches.")
+                    }
+                } else {
+                    ScrollView(showsIndicators: false) {
+                        Card {
+                            ForEach(Array(browser.shownSites.enumerated()), id: \.element.host) { index, site in
+                                if index > 0 { Rule() }
+                                Site(
+                                    host: site.host,
+                                    logins: site.logins,
+                                    open: open == site.host,
+                                    toggle: { open = open == site.host ? nil : site.host },
+                                    copy: { browser.copy($0) },
+                                    forget: { browser.forget($0) }
+                                )
+                            }
+                        }
+                        .padding(.bottom, 2)
+                    }
+                    .frame(maxHeight: 400)
+                }
+            }
+        } foot: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text("Bring in from")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Palette.muted)
+                    // Only the browsers actually on this Mac.
+                    ForEach(Chromium.installed()) { source in
+                        Pill(source.name) {
+                            importing = source.name
+                            // Off the main thread: four hundred passwords is a
+                            // moment of arithmetic, and the panel stays alive.
+                            DispatchQueue.global(qos: .userInitiated).async {
+                                let outcome = Result { try Chromium.read(source) }
+                                DispatchQueue.main.async {
+                                    importing = nil
+                                    browser.took(outcome, from: source)
+                                }
+                            }
+                        }
+                        .disabled(importing != nil)
+                    }
+                    Pill("CSV file…") { browser.importPasswords() }
+                        .disabled(importing != nil)
+                    Spacer(minLength: 0)
+                    if let importing {
+                        Ring(size: 10)
+                        Text("Reading \(importing)…")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Palette.muted)
+                    } else {
+                        Text(browser.saved.count == 1 ? "1 password" : "\(browser.saved.count) passwords")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Palette.muted)
+                    }
+                }
+                Text("macOS asks once for that browser's keychain key. Nothing is changed there; everything lands in your own keychain, under Search.")
+                    .font(.system(size: 11.5))
                     .foregroundStyle(Palette.muted)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 16)
-                    .padding(.bottom, 4)
-            } else {
-                list
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            if adding {
-                Divider().overlay(Palette.hairline).padding(.vertical, 12)
-                AddForm(browser: browser) { adding = false }
-                    .transition(.opacity)
-            }
-
-            Divider().overlay(Palette.hairline).padding(.vertical, 12)
-            foot
         }
-        .padding(16)
-        .frame(width: 520, alignment: .leading)
-        .background(Palette.ground, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Palette.hairline, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.16), radius: 34, y: 12)
         .animation(Motion.settle, value: adding)
         .animation(Motion.settle, value: open)
         .onAppear { hunting = true }
-    }
-
-    private var head: some View {
-        HStack(spacing: 8) {
-            Text("Passwords")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Palette.faint)
-                .textCase(.uppercase)
-                .tracking(0.6)
-            Spacer(minLength: 0)
-            Text(browser.saved.count == 1 ? "1 password" : "\(browser.saved.count) passwords")
-                .font(.system(size: 11))
-                .foregroundStyle(Palette.faint)
-            Pill(adding ? "Cancel" : "Add") { adding.toggle() }
-        }
-        .padding(.horizontal, 8)
-        .padding(.bottom, 10)
-    }
-
-    private var search: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Palette.faint)
-            ZStack(alignment: .leading) {
-                if browser.hunting.isEmpty {
-                    Text("Search sites and accounts").foregroundStyle(Palette.ink.opacity(0.3))
-                }
-                TextField("", text: $browser.hunting)
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(Palette.ink)
-                    .focused($hunting)
-            }
-            .font(.system(size: 12.5))
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(Palette.wash, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-    }
-
-    /// One line per site, opened to its accounts with a click.
-    private var list: some View {
-        ScrollView(showsIndicators: false) {
-            LazyVStack(spacing: 2) {
-                ForEach(browser.shownSites, id: \.host) { site in
-                    Site(
-                        host: site.host,
-                        logins: site.logins,
-                        open: open == site.host,
-                        toggle: { open = open == site.host ? nil : site.host },
-                        copy: { browser.copy($0) },
-                        forget: { browser.forget($0) }
-                    )
-                }
-            }
-        }
-        .frame(maxHeight: 440)
-        .padding(.top, 8)
-    }
-
-    private var foot: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("Bring in from")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Palette.faint)
-                    .textCase(.uppercase)
-                    .tracking(0.6)
-                if let importing {
-                    Ring(size: 9)
-                    Text("Reading \(importing)…")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.faint)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-
-            // Only the browsers actually on this Mac.
-            HStack(spacing: 6) {
-                ForEach(Chromium.installed()) { source in
-                    Pill(source.name) {
-                        importing = source.name
-                        // Off the main thread: four hundred passwords is a
-                        // moment of arithmetic, and the panel stays alive.
-                        DispatchQueue.global(qos: .userInitiated).async {
-                            let outcome = Result { try Chromium.read(source) }
-                            DispatchQueue.main.async {
-                                importing = nil
-                                browser.took(outcome, from: source)
-                            }
-                        }
-                    }
-                    .disabled(importing != nil)
-                }
-                Pill("CSV file…") { browser.importPasswords() }
-                    .disabled(importing != nil)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-
-            HStack {
-                Text("macOS will ask once for that browser's keychain key. Nothing is changed there.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Palette.faint)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer()
-                Button("Done") { browser.managing = false }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Palette.muted)
-                    .keyboardShortcut(.cancelAction)
-            }
-            .padding(.horizontal, 8)
-        }
     }
 
     /// A site, and under it its accounts once opened.
@@ -182,32 +113,29 @@ struct PasswordsPanel: View {
                 HStack(spacing: 10) {
                     Mark(icon: Favicons.shared.cached(host), letter: host.first.map { String($0).uppercased() } ?? "•", size: 16)
                     Text(host)
-                        .font(.system(size: 12.5))
+                        .font(.system(size: 13))
                         .foregroundStyle(Palette.ink)
                         .lineLimit(1)
                     if logins.count > 1 {
                         Text("\(logins.count) accounts")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Palette.faint)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Palette.muted)
                     } else if let only = logins.first, !only.user.isEmpty, !open {
                         Text(only.user)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Palette.faint)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Palette.muted)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(Palette.faint)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Palette.muted)
                         .rotationEffect(.degrees(open ? 90 : 0))
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(open || hovering ? Palette.wash : .clear)
-                )
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(open ? Palette.wash.opacity(0.6) : (hovering ? Palette.hover : .clear))
                 .contentShape(Rectangle())
                 .onTapGesture(perform: toggle)
                 .onHover { hovering = $0 }
@@ -219,9 +147,9 @@ struct PasswordsPanel: View {
                             Account(login: login, copy: { copy(login) }, forget: { forget(login) })
                         }
                     }
-                    .padding(.leading, 26)
-                    .padding(.top, 2)
-                    .padding(.bottom, 6)
+                    .padding(.leading, 30)
+                    .padding(.trailing, 6)
+                    .padding(.vertical, 4)
                     .transition(.opacity)
                 }
             }
@@ -249,7 +177,7 @@ struct PasswordsPanel: View {
                     .frame(minWidth: 120, alignment: .leading)
 
                 Text(shown ? login.password : String(repeating: "•", count: min(12, max(6, login.password.count))))
-                    .font(.system(size: shown ? 12 : 10, design: .monospaced))
+                    .font(.system(size: shown ? 12.5 : 10, design: .monospaced))
                     .foregroundStyle(shown ? Palette.ink : Palette.muted)
                     .lineLimit(1)
                     .textSelection(.enabled)
@@ -257,26 +185,14 @@ struct PasswordsPanel: View {
                 Spacer(minLength: 8)
 
                 if hovering || shown {
-                    Button(shown ? "Hide" : "Show") { shown ? conceal() : reveal() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.ink)
-                    Button("Copy", action: copy)
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.ink)
-                    Button("Remove", action: forget)
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.red.opacity(0.7))
+                    Quick(shown ? "Hide" : "Show") { shown ? conceal() : reveal() }
+                    Quick("Copy", act: copy)
+                    Quick("Remove", tint: .red.opacity(0.75), act: forget)
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(hovering ? Palette.hover : .clear)
-            )
+            .padding(.vertical, 7)
+            .background(hovering ? Palette.hover : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .animation(Motion.quick, value: hovering)
@@ -338,7 +254,7 @@ struct PasswordsPanel: View {
                         .disabled(Vault.host(of: site).isEmpty || password.isEmpty)
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(14)
             .onAppear { focus = 0 }
         }
 

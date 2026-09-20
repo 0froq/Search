@@ -320,6 +320,10 @@ final class Bench {
             if let on = request["settings"] as? Bool { browser.tuning = on }
             if let on = request["passwords"] as? Bool { browser.managing = on }
             if let on = request["welcome"] as? Bool { browser.welcoming = on }
+            if let on = request["history"] as? Bool { browser.recalling = on }
+            if let on = request["downloads"] as? Bool { browser.hoarding = on }
+            if let on = request["bookmarks"] as? Bool { browser.bookmarking = on }
+            if let on = request["hidden"] as? Bool { browser.reviewing = on }
             if let look = (request["look"] as? String).flatMap(Look.init) { browser.prefs.look = look }
             if let on = request["sidebar"] as? Bool { browser.prefs.sidebar = on }
             answer(["ok": true])

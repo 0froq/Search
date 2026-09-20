@@ -413,62 +413,6 @@ struct SettingsPanel: View {
 
     // MARK: - pieces
 
-    /// A group of lines in one hairline box.
-    private struct Card<Content: View>: View {
-        @ViewBuilder let content: () -> Content
-
-        var body: some View {
-            VStack(spacing: 0) { content() }
-                .background(Palette.ground)
-                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .strokeBorder(Palette.hairline, lineWidth: 1)
-                )
-        }
-    }
-
-    /// The hairline between two lines of a card, inset like the text.
-    private struct Rule: View {
-        var body: some View {
-            Rectangle().fill(Palette.hairline).frame(height: 1).padding(.leading, 14)
-        }
-    }
-
-    /// One thing to set: what it is on the left, the control on the right.
-    private struct Line<Control: View>: View {
-        let title: String
-        let detail: String?
-        @ViewBuilder let control: () -> Control
-
-        init(_ title: String, _ detail: String? = nil, @ViewBuilder control: @escaping () -> Control) {
-            self.title = title
-            self.detail = detail
-            self.control = control
-        }
-
-        var body: some View {
-            HStack(alignment: .center, spacing: 16) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Palette.ink)
-                    if let detail {
-                        Text(detail)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Palette.muted)
-                            .lineLimit(3)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                Spacer(minLength: 8)
-                control()
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-        }
-    }
-
     /// A keystroke and what it does.
     private struct Shortcut: View {
         let keys: String
