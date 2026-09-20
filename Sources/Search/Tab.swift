@@ -589,9 +589,14 @@ final class Tab: ObservableObject, Identifiable {
         }
     }
 
-    /// Opened for the first time since the app started.
-    func wake() {
-        guard let url = pending else { return }
+    /// Opened for the first time since the app started, or coming back from
+    /// ⌘W while pinned. Answers whether there was anything to wake — the
+    /// caller's own `revive()`, right after this, is for a tab that went
+    /// quiet a different way, and firing it too here raced this very load
+    /// with a second one of its own for the same address.
+    @discardableResult
+    func wake() -> Bool {
+        guard let url = pending else { return false }
         pending = nil
         failure = nil
         reading = 0
@@ -600,6 +605,7 @@ final class Tab: ObservableObject, Identifiable {
         typing = false
         immersed = false
         web.load(URLRequest(url: url))
+        return true
     }
 
     /// A tab opened by a link is not blank, even though WebKit hasn't started

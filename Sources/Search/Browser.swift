@@ -873,10 +873,11 @@ final class Browser: NSObject, ObservableObject {
         leaving()
         activeID = tab.id
         tab.touch()
-        // A tab brought back from last time opens the first time you look at it.
-        tab.wake()
-        // And one whose page died while you were away is loaded again.
-        tab.revive()
+        // A tab brought back from last time, or waking from ⌘W while pinned,
+        // opens the moment you look at it — and only if there was nothing to
+        // wake is this the other case, one whose page quietly died while you
+        // were elsewhere, which revive() checks for on its own.
+        if !tab.wake() { tab.revive() }
         rememberSession()
         editing = false
         typed = ""
