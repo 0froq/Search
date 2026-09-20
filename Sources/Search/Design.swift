@@ -67,8 +67,18 @@ enum Look: String, CaseIterable, Identifiable {
 
     /// Set on the app rather than on the window, so every panel, alert and
     /// sheet — and every page, which follows the window it is in — agrees.
+    ///
+    /// Never from inside whatever is happening when it is asked for: the
+    /// switch in Settings changes it from within an animation, over a panel
+    /// in transition, and re-skinning every window in the middle of that is
+    /// how a window ends up with a layer that takes clicks and shows
+    /// nothing. The next turn of the run loop is soon enough.
     func apply() {
-        NSApp.appearance = appearance
+        let wanted = appearance
+        DispatchQueue.main.async {
+            guard NSApp.appearance !== wanted, NSApp.appearance?.name != wanted?.name else { return }
+            NSApp.appearance = wanted
+        }
     }
 }
 

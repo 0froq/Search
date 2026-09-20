@@ -284,9 +284,49 @@ final class Bench {
             let width = request["width"] as? Double
             shoot(tab, to: URL(fileURLWithPath: path), width: width, answer)
 
+        case "probe":
+            // The state of the window itself, for the bug that is not in a
+            // page: which panels are up, whether something modal has the
+            // app, and every window the app owns.
+            var out: [String: Any] = [
+                "settings": browser.tuning,
+                "welcome": browser.welcoming,
+                "passwords": browser.managing,
+                "history": browser.recalling,
+                "downloads": browser.hoarding,
+                "bookmarks": browser.bookmarking,
+                "field": browser.editing,
+                "suggesting": browser.suggesting != nil,
+                "offering": browser.offering != nil,
+                "modal": NSApp.modalWindow.map { "\(type(of: $0)) “\($0.title)”" } ?? "",
+                "look": browser.prefs.look.rawValue,
+                "appearance": NSApp.appearance?.name.rawValue ?? "system",
+                "key": NSApp.keyWindow.map { "\(type(of: $0)) “\($0.title)”" } ?? "",
+            ]
+            out["windows"] = NSApp.windows.map { window -> [String: Any] in
+                [
+                    "kind": "\(type(of: window))",
+                    "title": window.title,
+                    "visible": window.isVisible,
+                    "level": window.level.rawValue,
+                    "frame": [Int(window.frame.minX), Int(window.frame.minY), Int(window.frame.width), Int(window.frame.height)],
+                ]
+            }
+            answer(out)
+
+        case "ui":
+            // Open or close the app's own panels, to reproduce what a person
+            // did without a person.
+            if let on = request["settings"] as? Bool { browser.tuning = on }
+            if let on = request["passwords"] as? Bool { browser.managing = on }
+            if let on = request["welcome"] as? Bool { browser.welcoming = on }
+            if let look = (request["look"] as? String).flatMap(Look.init) { browser.prefs.look = look }
+            if let on = request["sidebar"] as? Bool { browser.prefs.sidebar = on }
+            answer(["ok": true])
+
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "text", "eval", "click", "type", "submit", "shot",
+                "tabs", "open", "go", "close", "wait", "text", "eval", "click", "type", "submit", "shot", "probe", "ui",
             ]])
         }
     }

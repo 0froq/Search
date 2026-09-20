@@ -94,7 +94,9 @@ final class Preferences: ObservableObject {
         bench = store.bool(forKey: "bench")
         let chosen = store.string(forKey: "look").flatMap(Look.init) ?? .light
         look = chosen
-        chosen.apply()
+        // Before the first window, and not deferred: the window that is about
+        // to be made should be made in the right appearance.
+        NSApp.appearance = chosen.appearance
         sidebar = store.object(forKey: "sidebar") as? Bool
             ?? (store.string(forKey: "manner") == "side")
         let width = store.object(forKey: "sidebar.width") as? Double ?? Double(Metrics.side)
