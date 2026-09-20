@@ -533,6 +533,32 @@ final class Tab: ObservableObject, Identifiable {
     /// than showing the white that is left.
     var stale = false
 
+    /// The process behind this page just died while it was the one on
+    /// screen. `reload()`/`reloadFromOrigin()` lean on state the dead
+    /// process was keeping — asking for the address back instead is the
+    /// same trick `revive()` and the hollow branch of `reload()` already
+    /// use, and the one that doesn't depend on anything the crash took with
+    /// it. Tried twice: right after a process dies, WebKit doesn't always
+    /// accept the very next load, which is what a reload that looks like it
+    /// did nothing actually was.
+    func recoverFromCrash() {
+        guard let address else { return }
+        failure = nil
+        web.load(URLRequest(url: address))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self else { return }
+            web.evaluateJavaScript("document.readyState") { [weak self] _, error in
+                MainActor.assumeIsolated {
+                    guard let self, let error = error as NSError? else { return }
+                    guard error.domain == WKErrorDomain,
+                          error.code == WKError.webContentProcessTerminated.rawValue
+                    else { return }
+                    self.web.load(URLRequest(url: address))
+                }
+            }
+        }
+    }
+
     /// Coming back to a tab. A page whose process was taken away out of sight
     /// — memory pressure, a long sleep — comes back as a white rectangle, and
     /// WebKit does not always say so for a view that was out of its window.

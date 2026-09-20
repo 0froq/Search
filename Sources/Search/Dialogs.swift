@@ -203,7 +203,7 @@ extension Browser {
         // In front of you: straight back, a reload beats a white page with a
         // button on it. Behind another tab: the moment you come back to it.
         if tab.id == activeID, !tab.isBlank {
-            tab.reload()
+            tab.recoverFromCrash()
         } else {
             tab.stale = true
         }
