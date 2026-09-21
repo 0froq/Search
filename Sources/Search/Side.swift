@@ -20,9 +20,17 @@ struct SideBar: View {
     @State private var grabbed: CGFloat?
     @State private var onEdge = false
 
+    /// A pin, picked up out of the grid — a separate state from the loose
+    /// rows above, since the two gestures never happen at once but move on
+    /// two different axes.
+    @State private var pinDragging: Tab.ID?
+    @State private var pinFrom = 0
+    @State private var pinTravel: CGSize = .zero
+
     private static let row: CGFloat = 28
     private static let gap: CGFloat = 2
     private static let square: CGFloat = 34
+    private static let pinGap: CGFloat = 4
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -108,9 +116,10 @@ struct SideBar: View {
     /// frame late, and for one frame the whole column would drag the window.
     private var rowsEnd: CGFloat {
         let pins = browser.pinnedCount
-        let pinRows = pins == 0 ? 0 : (pins + 4) / 5
+        let cols = SideBar.pinColumns(pins)
+        let pinRows = pins == 0 ? 0 : (pins + cols - 1) / cols
         let pinHeight = pinRows == 0 ? 0
-            : CGFloat(pinRows) * SideBar.square + CGFloat(pinRows - 1) * 4 + 10
+            : CGFloat(pinRows) * pinSquare + CGFloat(pinRows - 1) * SideBar.pinGap + 10
         let loose = CGFloat(browser.tabs.count - pins) * (SideBar.row + SideBar.gap)
         return 42 + pinHeight + loose + SideBar.row + 8
     }
@@ -120,24 +129,104 @@ struct SideBar: View {
     private var pinnedTabs: [Tab] { browser.tabs.filter { $0.pin != nil } }
     private var looseTabs: [Tab] { browser.tabs.filter { $0.pin == nil } }
 
-    /// Five to a row, left-aligned, the way letters go on a page.
+    /// Three columns is the block's own shape — up to six pins, that's two
+    /// full rows, and one or two is just those same three places with a
+    /// couple of them empty rather than a lonely row of its own width. Only
+    /// past six does the block widen, one column at a time, to stay at two
+    /// rows for as long as that's a reasonable shape at all.
+    private static func pinColumns(_ count: Int) -> Int {
+        max(3, (count + 1) / 2)
+    }
+
+    /// The columns' own width call the square's size before the column
+    /// does — a square only shrinks once its column is too narrow for the
+    /// ideal 34 to fit `columns` of them side by side.
+    private var pinSquare: CGFloat {
+        let cols = SideBar.pinColumns(browser.pinnedCount)
+        guard cols > 0 else { return SideBar.square }
+        let available = prefs.sideWidth - 20 - CGFloat(cols - 1) * SideBar.pinGap
+        return min(SideBar.square, max(20, available / CGFloat(cols)))
+    }
+
+    /// The grid itself: fixed-size cells, left-aligned, so a half-empty last
+    /// row holds its ground rather than stretching to fill it.
     private var pinned: some View {
         let tabs = pinnedTabs
-        return VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(stride(from: 0, to: tabs.count, by: 5)), id: \.self) { start in
-                HStack(spacing: 4) {
-                    ForEach(tabs[start..<min(start + 5, tabs.count)]) { tab in
-                        PinSquare(
-                            browser: browser,
-                            prefs: prefs,
-                            tab: tab,
-                            live: tab.id == browser.activeID,
-                            pill: pill
-                        )
+        let cols = SideBar.pinColumns(tabs.count)
+        let size = pinSquare
+        let columns = Array(repeating: GridItem(.fixed(size), spacing: SideBar.pinGap), count: cols)
+        return LazyVGrid(columns: columns, alignment: .leading, spacing: SideBar.pinGap) {
+            ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                let held = pinDragging == tab.id
+                PinSquare(
+                    browser: browser,
+                    prefs: prefs,
+                    tab: tab,
+                    live: tab.id == browser.activeID,
+                    pill: pill,
+                    size: size
+                )
+                .offset(pinOffset(held: held, index: index, columns: cols))
+                .zIndex(held ? 1 : 0)
+                .shadow(color: .black.opacity(held ? 0.16 : 0), radius: 10, y: 3)
+                .gesture(pinReorder(tab: tab, index: index, columns: cols, size: size))
+            }
+        }
+    }
+
+    /// The one square actually held stays glued to the fingers; every other
+    /// square is already exactly where it belongs, because `browser.move`
+    /// put it there — this only cancels out the bit of that same movement
+    /// the held square already got for free by changing index underneath
+    /// its own drag.
+    private func pinOffset(held: Bool, index: Int, columns: Int) -> CGSize {
+        guard held else { return .zero }
+        let step = pinSquare + SideBar.pinGap
+        let from = (row: pinFrom / columns, col: pinFrom % columns)
+        let now = (row: index / columns, col: index % columns)
+        return CGSize(
+            width: pinTravel.width - CGFloat(now.col - from.col) * step,
+            height: pinTravel.height - CGFloat(now.row - from.row) * step
+        )
+    }
+
+    /// How many cells the drag has moved, in the grid's own row-major order
+    /// — a straight line through the array a column-major offset would get
+    /// wrong the moment it crossed a row.
+    private func pinDelta(columns: Int, step: CGFloat) -> Int {
+        let col = Int((pinTravel.width / step).rounded())
+        let row = Int((pinTravel.height / step).rounded())
+        return row * columns + col
+    }
+
+    private func pinTarget(from: Int, moved: Int) -> Int {
+        min(max(0, from + moved), max(0, pinnedTabs.count - 1))
+    }
+
+    /// Pick a square up and the others make way — across a row, and down
+    /// into the next, exactly as far as the fingers actually moved.
+    private func pinReorder(tab: Tab, index: Int, columns: Int, size: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 5)
+            .onChanged { value in
+                if pinDragging != tab.id {
+                    pinDragging = tab.id
+                    pinFrom = index
+                }
+                pinTravel = value.translation
+                let step = size + SideBar.pinGap
+                let target = pinTarget(from: pinFrom, moved: pinDelta(columns: columns, step: step))
+                if target != index {
+                    withAnimation(Motion.settle) {
+                        browser.move(tab, to: target)
                     }
                 }
             }
-        }
+            .onEnded { _ in
+                withAnimation(Motion.settle) {
+                    pinDragging = nil
+                    pinTravel = .zero
+                }
+            }
     }
 
     // MARK: - the rows
@@ -220,6 +309,7 @@ private struct PinSquare: View {
     @ObservedObject var tab: Tab
     let live: Bool
     let pill: Namespace.ID
+    var size: CGFloat = 34
 
     @State private var hovering = false
 
@@ -228,26 +318,26 @@ private struct PinSquare: View {
             if browser.editingPin == tab.id {
                 PinField(browser: browser, tab: tab)
             } else if prefs.glyph == .icons, let icon = tab.icon {
-                Mark(icon: icon, letter: tab.pin ?? "", size: 16, dim: tab.asleep)
+                Mark(icon: icon, letter: tab.pin ?? "", size: size * 16 / 34, dim: tab.asleep)
             } else {
                 Text(tab.pin ?? "")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: size * 12 / 34, weight: .medium))
                     .foregroundStyle((live ? Palette.ink : Palette.muted).opacity(tab.asleep ? 0.45 : 1))
             }
         }
-        .frame(width: 16, height: 16)
-        .frame(width: 34, height: 34)
+        .frame(width: size * 16 / 34, height: size * 16 / 34)
+        .frame(width: size, height: size)
         .background {
             if live {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: size * 9 / 34, style: .continuous)
                     .fill(Palette.wash)
                     .matchedGeometryEffect(id: "live", in: pill)
             } else {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                RoundedRectangle(cornerRadius: size * 9 / 34, style: .continuous)
                     .fill(hovering ? Palette.hover : Palette.wash.opacity(0.55))
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: size * 9 / 34, style: .continuous))
         .modifier(OneClick(double: live) {
             if live { browser.editLetter(tab) } else { browser.select(tab) }
         })
