@@ -138,14 +138,15 @@ struct SideBar: View {
         max(3, (count + 1) / 2)
     }
 
-    /// The columns' own width call the square's size before the column
-    /// does — a square only shrinks once its column is too narrow for the
-    /// ideal 34 to fit `columns` of them side by side.
+    /// However many columns the count calls for, they split the row's own
+    /// width between them — the row is what fills edge to edge, not each
+    /// square on its own, so this grows past 34 just as readily as it
+    /// shrinks below it.
     private var pinSquare: CGFloat {
         let cols = SideBar.pinColumns(browser.pinnedCount)
         guard cols > 0 else { return SideBar.square }
         let available = prefs.sideWidth - 20 - CGFloat(cols - 1) * SideBar.pinGap
-        return min(SideBar.square, max(20, available / CGFloat(cols)))
+        return max(20, available / CGFloat(cols))
     }
 
     /// The grid itself: fixed-size cells, left-aligned, so a half-empty last
