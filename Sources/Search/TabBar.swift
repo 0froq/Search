@@ -32,7 +32,9 @@ struct TabBar: View {
 
                 HStack(spacing: Metrics.tabGap) {
                     ForEach(Array(browser.tabs.enumerated()), id: \.element.id) { index, tab in
-                        let step = width(in: geo.size.width) + Metrics.tabGap
+                        // A pinned square moves among pinned squares, a title
+                        // among titles: each has its own stride.
+                        let step = (tab.pin != nil ? Metrics.pinWidth : width(in: geo.size.width)) + Metrics.tabGap
                         let held = dragging == tab.id
                         TabPill(
                             browser: browser,
@@ -90,6 +92,7 @@ struct TabBar: View {
                 // their way, because nothing here was ever in it.
                 .padding(.leading, Metrics.lights)
                 .padding(.trailing, 12)
+                .coordinateSpace(name: "strip")
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .onAppear { geoWidth = geo.size.width }
@@ -113,7 +116,8 @@ struct TabBar: View {
 
     /// Pick a tab up and the others get out of its way as it passes them.
     private func reorder(tab: Tab, index: Int, step: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 5)
+        // In the row's space, not the pill's — see the sidebar's grid for why.
+        DragGesture(minimumDistance: 5, coordinateSpace: .named("strip"))
             .onChanged { value in
                 if dragging != tab.id {
                     dragging = tab.id

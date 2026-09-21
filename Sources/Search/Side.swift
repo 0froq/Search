@@ -166,7 +166,11 @@ struct SideBar: View {
         let width = pinWidth
         let height = pinHeight
         let columns = Array(repeating: GridItem(.fixed(width), spacing: SideBar.pinGap), count: cols)
-        return LazyVGrid(columns: columns, alignment: .leading, spacing: SideBar.pinGap) {
+        // Measured in the grid's own space, not the square's: a square that
+        // has just been moved to a new cell would otherwise report the drag
+        // from where it now is, the target would jump back, and the square
+        // would shuttle between two cells for as long as the finger stayed.
+        return VStack(spacing: 0) { LazyVGrid(columns: columns, alignment: .leading, spacing: SideBar.pinGap) {
             ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                 let held = pinDragging == tab.id
                 PinSquare(
@@ -183,7 +187,8 @@ struct SideBar: View {
                 .shadow(color: .black.opacity(held ? 0.16 : 0), radius: 10, y: 3)
                 .gesture(pinReorder(tab: tab, index: index, columns: cols, width: width, height: height))
             }
-        }
+        } }
+        .coordinateSpace(name: "pins")
     }
 
     /// The one square actually held stays glued to the fingers; every other
@@ -221,7 +226,7 @@ struct SideBar: View {
     /// Pick a square up and the others make way — across a row, and down
     /// into the next, exactly as far as the fingers actually moved.
     private func pinReorder(tab: Tab, index: Int, columns: Int, width: CGFloat, height: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 5)
+        DragGesture(minimumDistance: 5, coordinateSpace: .named("pins"))
             .onChanged { value in
                 if pinDragging != tab.id {
                     pinDragging = tab.id
@@ -249,6 +254,8 @@ struct SideBar: View {
 
     private var loose: some View {
         VStack(spacing: SideBar.gap) {
+            // See the grid: the drag is measured in the column's space, not
+            // the row's, so a row that has just moved keeps its bearings.
             ForEach(Array(looseTabs.enumerated()), id: \.element.id) { index, tab in
                 let step = SideBar.row + SideBar.gap
                 let held = dragging == tab.id
@@ -266,11 +273,12 @@ struct SideBar: View {
                 .gesture(reorder(tab: tab, index: index, step: step))
             }
         }
+        .coordinateSpace(name: "rows")
     }
 
     /// Pick a row up and the others make way as it passes them.
     private func reorder(tab: Tab, index: Int, step: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 5)
+        DragGesture(minimumDistance: 5, coordinateSpace: .named("rows"))
             .onChanged { value in
                 if dragging != tab.id {
                     dragging = tab.id
