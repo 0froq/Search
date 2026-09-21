@@ -933,10 +933,11 @@ final class Browser: NSObject, ObservableObject {
         tab.close()
         tabs.remove(at: index)
         if activeID == tab.id {
-            // The neighbour on the right, or the last one if there is no right.
-            activeID = tabs[min(index, tabs.count - 1)].id
-            typed = ""
-            editing = false
+            // The neighbour on the right, or the last one if there is no
+            // right — through select(), same as everywhere else you land on
+            // a tab, so one that was never built yet actually wakes up
+            // instead of sitting there blank until a manual reload.
+            select(tabs[min(index, tabs.count - 1)])
         }
         rememberSession()
     }
