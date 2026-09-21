@@ -564,8 +564,25 @@ final class Tab: ObservableObject, Identifiable {
     /// take — no error, no navigation, just a view that goes on sitting on
     /// about:blank with nothing left to say so. Still there, or still
     /// answering for a process that's already gone, is asked once more.
-    private func loadAndVerify(_ url: URL) {
-        web.load(URLRequest(url: url))
+    private func loadAndVerify(_ url: URL, tries: Int = 0) {
+        // Wait for the stage to take the view back before loading into it. A
+        // page loaded while its view is off any window boots as a hidden tab,
+        // and a site that holds everything until it is shown — x.com does,
+        // right down to making no request at all — can then miss being shown a
+        // moment later and sit on its placeholder for good. Coming back to a
+        // pinned tab after ⌘W is exactly that: select() asks for the view back
+        // and wakes the page in the same breath, one synchronous step ahead of
+        // SwiftUI actually putting the view on screen. Bounded at about a
+        // second, so a wake with no stage waiting for it still loads rather
+        // than hanging on one that will never come.
+        let view = web
+        if view.window == nil, tries < 50 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+                self?.loadAndVerify(url, tries: tries + 1)
+            }
+            return
+        }
+        view.load(URLRequest(url: url))
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self else { return }
             guard built?.url?.absoluteString != "about:blank" else {
