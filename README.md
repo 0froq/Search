@@ -1,6 +1,6 @@
 # Search
 
-A small, fast, quiet web browser for the Mac. Made by [Office Commun](https://officecommun.com), a design studio, for itself first — and shared because a browser that holds your passwords and your history should be one you can read.
+A small, fast, quiet web browser for the Mac, by [Office Commun](https://officecommun.com).
 
 ![Search, with its tabs down the left and a page taking the rest of the window](.github/screenshot.png)
 
