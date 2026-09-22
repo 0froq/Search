@@ -1,1 +1,3 @@
+Passkeys: sites that offer one can now sign you in with Touch ID or an iCloud passkey — Apple granted Search the browser entitlement for it. A pinned tab closed with ⌘W really lets its page go and comes back whole, instead of a blank that needed a reload. Pinned tabs fill the sidebar's width and can be dragged into any order. Two fingers tapped twice frame what they point at. Right-click on a picture gets a menu whose Copy Image and Download Image actually do it. Bookmarks drag into folders and have a right-click menu. Dark mode, and every panel on one plate. Passwords you bring in from Dia, Chrome, Arc, Brave or Edge read back correctly. The app looks for updates every hour while it is open. Cosmos scrolls again. And a real icon.
+
 The first one.
