@@ -533,10 +533,16 @@ final class Tab: ObservableObject, Identifiable {
         reading = 0
         lastY = 0
         noisy = false
-        guard let built else { return }
-        built.stopLoading()
-        // The surest way to make WebKit give a page back is to give it another.
-        built.load(URLRequest(url: URL(string: "about:blank")!))
+        stale = false
+        pull = nil
+        // Loading about:blank here looked like letting the page go, and
+        // wasn't: WebKit keeps the document it just left in the back-forward
+        // cache — alive, suspended, and still counted by its own origin as an
+        // open tab. Coming back then started a second x.com beside a first
+        // that would never answer, and the second waited for it until you
+        // gave up and reloaded by hand. Only tearing the view down ends the
+        // page; the next wake() builds a fresh one, and a fresh one boots.
+        discard()
     }
 
     /// Set when WebKit said the page's process went away while nobody was
@@ -671,6 +677,9 @@ final class Tab: ObservableObject, Identifiable {
     /// Again from the network. A view that has lost its document is given
     /// the address back instead: there is nothing else for it to reload.
     func reload() {
+        // A pin put down with ⌘W has no view left to reload; waking it is
+        // the reload.
+        guard !wake() else { return }
         if hollow, let address {
             web.load(URLRequest(url: address))
         } else {
@@ -686,8 +695,6 @@ final class Tab: ObservableObject, Identifiable {
     /// Called when the tab is thrown away. Without it the view keeps running
     /// whatever the page left behind — timers, video, sockets.
     func close() {
-        watch = []
-        ears.stop()
         onScroll = nil
         onZoom = nil
         onPick = nil
@@ -695,15 +702,29 @@ final class Tab: ObservableObject, Identifiable {
         onSignIn = nil
         onField = nil
         onCredentials = nil
+        discard()
+    }
+
+    /// The view and everything listening to it, gone — timers, video,
+    /// sockets, and the document WebKit would otherwise keep in its
+    /// back-forward cache. The tab keeps its address; `web` builds again the
+    /// next time anyone asks for it.
+    private func discard() {
+        watch = []
+        ears.stop()
         guard let web = built else { return }
+        built = nil
         let controller = web.configuration.userContentController
         controller.removeScriptMessageHandler(forName: ScrollRelay.name)
         controller.removeScriptMessageHandler(forName: VeilRelay.name)
         controller.removeScriptMessageHandler(forName: FormRelay.name)
+        controller.removeScriptMessageHandler(forName: ImageRelay.name)
         controller.removeAllUserScripts()
+        web.onPull = nil
         web.stopLoading()
         web.navigationDelegate = nil
         web.uiDelegate = nil
+        web.removeFromSuperview()
     }
 }
 

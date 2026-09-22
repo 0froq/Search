@@ -1148,7 +1148,9 @@ final class Browser: NSObject, ObservableObject {
     /// Everything but the video goes out of the way, and the page it lives in
     /// moves house — into a small window that stays above everything.
     private func lift(_ tab: Tab?, quietly: Bool) {
-        guard let tab, !tab.isBlank, !floater.showing else { return }
+        // A tab just put down with ⌘W has no page to lift a video out of, and
+        // asking it would only build an empty view to ask.
+        guard let tab, !tab.isBlank, !tab.asleep, !floater.showing else { return }
         // On its own, only from a site whose video is the point of the site.
         // A hero background on a studio's home page is a video too, and it
         // followed people around the desktop. ⌘⇧P still lifts from anywhere.

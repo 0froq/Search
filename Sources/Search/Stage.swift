@@ -14,7 +14,9 @@ struct Page: View {
 
     var body: some View {
         ZStack {
-            WebStage(page: tab.isBlank ? nil : tab.web)
+            // A tab put down with ⌘W has no view, and asking for one here
+            // would build an empty one a frame before the stage moves on.
+            WebStage(page: tab.isBlank || tab.asleep ? nil : tab.web)
 
             if tab.floating {
                 // The tab is not empty, its page is simply elsewhere. Saying so
