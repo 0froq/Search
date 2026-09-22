@@ -343,9 +343,10 @@ final class Bench {
             if let on = request["hidden"] as? Bool { browser.reviewing = on }
             if let look = (request["look"] as? String).flatMap(Look.init) { browser.prefs.look = look }
             if let on = request["sidebar"] as? Bool { browser.prefs.sidebar = on }
+            if #available(macOS 15.4, *), let on = request["extensions"] as? Bool { Extensions.shared.menuOpen = on }
             answer(["ok": true])
 
-        case "extensions", "ext-add", "ext-folder", "ext-press", "ext-remove", "ext-page", "ext-popup":
+        case "extensions", "ext-add", "ext-folder", "ext-press", "ext-remove", "ext-reload", "ext-page", "ext-popup", "ext-menu", "ext-pin":
             guard #available(macOS 15.4, *) else {
                 answer(["error": "extensions need macOS 15.4"])
                 return
@@ -378,6 +379,7 @@ final class Bench {
                     "reported": extensions.errors[item.id] ?? [],
                     "action": action?.label ?? "", "badge": action?.badgeText ?? "",
                     "popup": action?.presentsPopup ?? false,
+                    "pinned": item.pinned ?? false, "source": item.source ?? "",
                 ]
             }])
         case "ext-add":
@@ -392,6 +394,22 @@ final class Bench {
             guard let id = request["id"] as? String else { answer(["error": "ext-press needs an id"]); return }
             extensions.press(id)
             answer(["pressed": true])
+        case "ext-menu":
+            // The list behind the puzzle button, as a picture.
+            guard let path = request["path"] as? String, let data = extensionMenuPicture()?.representation(using: .png, properties: [:]) else {
+                answer(["error": "ext-menu needs a path"])
+                return
+            }
+            do { try data.write(to: URL(fileURLWithPath: path)); answer(["saved": path]) }
+            catch { answer(["error": error.localizedDescription]) }
+        case "ext-pin":
+            guard let id = request["id"] as? String else { answer(["error": "ext-pin needs an id"]); return }
+            extensions.setPinned(id, request["on"] as? Bool ?? true)
+            answer(["pinned": request["on"] as? Bool ?? true])
+        case "ext-reload":
+            guard let id = request["id"] as? String else { answer(["error": "ext-reload needs an id"]); return }
+            extensions.reload(id)
+            answer(["reloading": true])
         case "ext-remove":
             guard let id = request["id"] as? String else { answer(["error": "ext-remove needs an id"]); return }
             extensions.remove(id)

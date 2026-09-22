@@ -29,6 +29,12 @@ struct Installed: Codable, Identifiable, Equatable {
     /// The permissions it was installed with, so an update that asks for more
     /// is asked about rather than slipped through.
     var permissions: [String]
+    /// Kept in the row beside the menu rather than only in it. Optional, so
+    /// a list written before there was pinning still reads.
+    var pinned: Bool? = nil
+    /// For one loaded from a folder: where that folder is, so Reload can
+    /// bring the author's latest edits in.
+    var source: String? = nil
 }
 
 @available(macOS 15.4, *)
@@ -274,12 +280,60 @@ final class Extensions: NSObject, ObservableObject {
             browser?.announce("Couldn't copy the extension")
             return
         }
-        Task { try? await admit(staged, as: id, fromStore: false, finalFolder: Extensions.folder(for: id), confirm: confirm || !Store.testing) }
+        Task { try? await admit(staged, as: id, fromStore: false, finalFolder: Extensions.folder(for: id), confirm: confirm || !Store.testing, source: source) }
+    }
+
+    /// Takes the extension up again — the way Chrome's reload button does
+    /// in developer mode. One loaded from a folder is copied in afresh from
+    /// that folder first, so what its author just saved is what runs.
+    func reload(_ id: String) {
+        guard let index = installed.firstIndex(where: { $0.id == id }) else { return }
+        let target = Extensions.folder(for: id)
+        if let path = installed[index].source {
+            let source = URL(fileURLWithPath: path, isDirectory: true)
+            let files = FileManager.default
+            guard files.fileExists(atPath: source.appendingPathComponent("manifest.json").path) else {
+                browser?.announce("The folder \(installed[index].name) was loaded from is gone")
+                return
+            }
+            let staged = Extensions.folder.appendingPathComponent(".staging-\(id)", isDirectory: true)
+            do {
+                try? files.removeItem(at: staged)
+                try files.copyItem(at: source, to: staged)
+                try ExtensionShims.prepare(staged)
+                try? files.removeItem(at: target)
+                try files.moveItem(at: staged, to: target)
+            } catch {
+                try? files.removeItem(at: staged)
+                browser?.announce("Couldn't copy \(installed[index].name) again")
+                return
+            }
+        }
+        unload(id)
+        errors[id] = nil
+        Task {
+            if let found = try? await WKWebExtension(resourceBaseURL: target),
+               let index = installed.firstIndex(where: { $0.id == id }) {
+                installed[index].name = found.displayName ?? installed[index].name
+                installed[index].version = found.version ?? installed[index].version
+                installed[index].permissions = found.requestedPermissions.map(\.rawValue).sorted()
+                save()
+            }
+            guard let item = installed.first(where: { $0.id == id }), item.enabled else { return }
+            browser?.announce(await load(item) ? "\(item.name) reloaded" : "\(item.name) couldn't start — see Settings › Extensions")
+        }
+    }
+
+    func setPinned(_ id: String, _ on: Bool) {
+        guard let index = installed.firstIndex(where: { $0.id == id }) else { return }
+        installed[index].pinned = on
+        save()
+        actionsChanged += 1
     }
 
     /// Reads what was unpacked, asks, and — on yes — moves it into place and
     /// loads it. On no, nothing is left behind.
-    private func admit(_ staged: URL, as id: String, fromStore: Bool, finalFolder: URL, confirm: Bool = true) async throws {
+    private func admit(_ staged: URL, as id: String, fromStore: Bool, finalFolder: URL, confirm: Bool = true, source: URL? = nil) async throws {
         let files = FileManager.default
         let found: WKWebExtension
         do {
@@ -298,7 +352,8 @@ final class Extensions: NSObject, ObservableObject {
         try files.moveItem(at: staged, to: finalFolder)
         let item = Installed(
             id: id, name: name, version: found.version ?? "?", enabled: true, fromStore: fromStore,
-            permissions: found.requestedPermissions.map(\.rawValue).sorted()
+            permissions: found.requestedPermissions.map(\.rawValue).sorted(),
+            source: source?.path
         )
         installed.removeAll { $0.id == id }
         installed.append(item)
@@ -455,11 +510,18 @@ final class Extensions: NSObject, ObservableObject {
 
     struct Button: Identifiable {
         let id: String
+        let name: String
         let label: String
         let icon: NSImage?
         let badge: String
         let enabled: Bool
+        let pinned: Bool
     }
+
+    /// The list behind the puzzle button.
+    @Published var menuOpen = false
+    /// Where a popup hangs when its extension isn't pinned: the puzzle button.
+    static let menuAnchor = "__menu"
 
     /// One per loaded extension that has something to press, in install order.
     var buttons: [Button] {
@@ -469,10 +531,12 @@ final class Extensions: NSObject, ObservableObject {
             guard let context = contexts[item.id], let action = context.action(for: tab) else { return nil }
             return Button(
                 id: item.id,
+                name: item.name,
                 label: action.label.isEmpty ? item.name : action.label,
                 icon: action.icon(for: CGSize(width: 16, height: 16)),
                 badge: action.badgeText,
-                enabled: action.isEnabled
+                enabled: action.isEnabled,
+                pinned: item.pinned ?? false
             )
         }
     }
@@ -564,7 +628,9 @@ extension Extensions: WKWebExtensionControllerDelegate {
         let url = action.popupWebView?.url ?? Extensions.popupURL(for: context)
         action.closePopup()
         guard let url else { return }
-        ExtensionPopup.shared.show(url, for: context, from: anchors[context.uniqueIdentifier]?.view)
+        let own = anchors[context.uniqueIdentifier]?.view
+        let anchor = own?.window != nil ? own : anchors[Extensions.menuAnchor]?.view
+        ExtensionPopup.shared.show(url, for: context, from: anchor)
     }
 
     /// `runtime.sendNativeMessage`. To "search" — the APIs WebKit doesn't
@@ -689,12 +755,18 @@ final class ExtensionWindow: NSObject, WKWebExtensionWindow {
 
 // MARK: - the buttons in the row
 
-/// Every extension's button, beside the bookmarks. Nothing at all below
-/// macOS 15.4 or with nothing installed.
+/// The extensions, behind one puzzle button — a list to press them from,
+/// pin them out of, reload or remove them. The pinned ones also sit in the
+/// row beside it, the way Chrome does it. Nothing at all below macOS 15.4
+/// or with nothing installed.
 struct ExtensionSlot: View {
+    /// The side the list opens toward: down from the top row, out to the
+    /// right from the sidebar.
+    var edge: Edge = .bottom
+
     var body: some View {
         if #available(macOS 15.4, *) {
-            ExtensionButtons(extensions: .shared)
+            ExtensionButtons(extensions: .shared, edge: edge)
         }
     }
 }
@@ -702,25 +774,23 @@ struct ExtensionSlot: View {
 @available(macOS 15.4, *)
 private struct ExtensionButtons: View {
     @ObservedObject var extensions: Extensions
+    let edge: Edge
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(extensions.buttons) { button in
-                ActionButton(button: button) { extensions.press(button.id) }
-                    .background(Anchor(id: button.id))
-                    .contextMenu {
-                        if extensions.contexts[button.id]?.optionsPageURL != nil {
-                            SwiftUI.Button("Options…") { extensions.openOptions(button.id) }
-                        }
-                        SwiftUI.Button("Remove “\(button.label)”…") {
-                            let alert = NSAlert()
-                            alert.messageText = "Remove “\(button.label)”?"
-                            alert.informativeText = "Its settings and data go with it."
-                            alert.addButton(withTitle: "Remove")
-                            alert.addButton(withTitle: "Cancel")
-                            if alert.runModal() == .alertFirstButtonReturn { extensions.remove(button.id) }
-                        }
-                    }
+        if !extensions.installed.isEmpty {
+            HStack(spacing: 2) {
+                ForEach(extensions.buttons.filter(\.pinned)) { button in
+                    ActionButton(button: button) { extensions.press(button.id) }
+                        .background(Anchor(id: button.id))
+                        .contextMenu { ExtensionActions(id: button.id, name: button.name, extensions: extensions) }
+                }
+                Door(icon: "puzzlepiece.extension", on: extensions.menuOpen, help: "Extensions") {
+                    extensions.menuOpen.toggle()
+                }
+                .background(Anchor(id: Extensions.menuAnchor))
+                .popover(isPresented: $extensions.menuOpen, arrowEdge: edge) {
+                    ExtensionMenu(extensions: extensions)
+                }
             }
         }
     }
@@ -732,33 +802,13 @@ private struct ExtensionButtons: View {
 
         var body: some View {
             SwiftUI.Button(action: press) {
-                ZStack(alignment: .bottomTrailing) {
-                    Group {
-                        if let icon = button.icon {
-                            Image(nsImage: icon).resizable().interpolation(.high).frame(width: 15, height: 15)
-                        } else {
-                            Image(systemName: "puzzlepiece.extension")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(Palette.muted)
-                        }
-                    }
+                ExtensionIcon(button: button, size: 15)
                     .frame(width: 26, height: 26)
-                    .opacity(button.enabled ? 1 : 0.4)
-                    if !button.badge.isEmpty {
-                        Text(button.badge)
-                            .font(.system(size: 8, weight: .semibold))
-                            .foregroundStyle(Palette.ground)
-                            .padding(.horizontal, 3)
-                            .frame(minWidth: 12, minHeight: 11)
-                            .background(Palette.ink, in: Capsule())
-                            .offset(x: 2, y: 1)
-                    }
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(hovering ? Palette.hover : .clear)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(hovering ? Palette.hover : .clear)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain)
             .onHover { hovering = $0 }
@@ -776,6 +826,222 @@ private struct ExtensionButtons: View {
         }
         func updateNSView(_ view: NSView, context: Context) {
             Extensions.shared.anchors[id] = WeakView(view)
+        }
+    }
+}
+
+/// An extension's icon with its badge in the corner.
+@available(macOS 15.4, *)
+private struct ExtensionIcon: View {
+    let button: Extensions.Button
+    let size: CGFloat
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Group {
+                if let icon = button.icon {
+                    Image(nsImage: icon).resizable().interpolation(.high).frame(width: size, height: size)
+                } else {
+                    // Its initial, rather than a puzzle piece that would
+                    // pass for the button the list opens from.
+                    Text(button.name.first.map { String($0).uppercased() } ?? "?")
+                        .font(.system(size: size * 0.62, weight: .semibold))
+                        .foregroundStyle(Palette.muted)
+                        .frame(width: size, height: size)
+                        .background(RoundedRectangle(cornerRadius: size * 0.28, style: .continuous).fill(Palette.wash))
+                }
+            }
+            .frame(width: size + 4, height: size + 4)
+            .opacity(button.enabled ? 1 : 0.4)
+            if !button.badge.isEmpty {
+                Text(button.badge)
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Palette.ground)
+                    .padding(.horizontal, 3)
+                    .frame(minWidth: 12, minHeight: 11)
+                    .background(Palette.ink, in: Capsule())
+                    .fixedSize()
+                    .offset(x: 5, y: 3)
+            }
+        }
+    }
+}
+
+/// What a right-click on an extension offers, in the row and in the list.
+@available(macOS 15.4, *)
+private struct ExtensionActions: View {
+    let id: String
+    let name: String
+    let extensions: Extensions
+
+    var body: some View {
+        let pinned = extensions.installed.first { $0.id == id }?.pinned ?? false
+        SwiftUI.Button(pinned ? "Unpin" : "Pin to Toolbar") { extensions.setPinned(id, !pinned) }
+        if extensions.contexts[id]?.optionsPageURL != nil {
+            SwiftUI.Button("Options…") { extensions.openOptions(id) }
+        }
+        SwiftUI.Button("Reload") { extensions.reload(id) }
+        Divider()
+        SwiftUI.Button("Remove “\(name)”…") { ExtensionActions.confirmRemove(id, name: name, extensions) }
+    }
+
+    static func confirmRemove(_ id: String, name: String, _ extensions: Extensions) {
+        let alert = NSAlert()
+        alert.messageText = "Remove “\(name)”?"
+        alert.informativeText = "Its settings and data go with it."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn { extensions.remove(id) }
+    }
+}
+
+/// The list, drawn off screen — for the bench, which can't keep a popover
+/// open in a browser that isn't in front.
+@available(macOS 15.4, *)
+@MainActor
+func extensionMenuPicture() -> NSBitmapImageRep? {
+    let host = NSHostingView(rootView: ExtensionMenu(extensions: .shared))
+    host.frame = NSRect(origin: .zero, size: host.fittingSize)
+    let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.appearance = NSApp.effectiveAppearance
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    guard let picture = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
+    host.cacheDisplay(in: host.bounds, to: picture)
+    return picture
+}
+
+/// The list behind the puzzle button: every running extension, a pin for
+/// each, and the way to Settings.
+@available(macOS 15.4, *)
+private struct ExtensionMenu: View {
+    @ObservedObject var extensions: Extensions
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let buttons = extensions.buttons
+            if buttons.isEmpty {
+                Text("None of your extensions is on")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Palette.muted)
+                    .padding(14)
+            } else {
+                ScrollView {
+                    VStack(spacing: 1) {
+                        ForEach(buttons) { button in
+                            Row(button: button, extensions: extensions)
+                        }
+                    }
+                    .padding(6)
+                }
+                .frame(maxHeight: 360)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Divider().overlay(Palette.hairline)
+            VStack(spacing: 1) {
+                Foot("folder", "Load Unpacked…") {
+                    extensions.menuOpen = false
+                    DispatchQueue.main.async { extensions.installFolder() }
+                }
+                Foot("gearshape", "Manage Extensions…") {
+                    extensions.menuOpen = false
+                    Store.settings.set("extensions", forKey: "settings.page")
+                    extensions.browser?.tuning = true
+                }
+            }
+            .padding(6)
+        }
+        .frame(width: 280)
+        .background(Palette.ground)
+    }
+
+    private struct Row: View {
+        let button: Extensions.Button
+        @ObservedObject var extensions: Extensions
+        @State private var hovering = false
+
+        var body: some View {
+            HStack(spacing: 9) {
+                ExtensionIcon(button: button, size: 16)
+                Text(button.name)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(button.enabled ? Palette.ink : Palette.muted)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if hovering, extensions.installed.first(where: { $0.id == button.id })?.source != nil {
+                    Tool(symbol: "arrow.clockwise", help: "Reload from its folder") { extensions.reload(button.id) }
+                }
+                if hovering || button.pinned {
+                    Tool(symbol: button.pinned ? "pin.fill" : "pin", help: button.pinned ? "Unpin" : "Pin to toolbar", on: button.pinned) {
+                        extensions.setPinned(button.id, !button.pinned)
+                    }
+                }
+            }
+            .padding(.leading, 8)
+            .padding(.trailing, 4)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Palette.wash : .clear))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                // The list goes first; the popup, if there is one, then
+                // hangs from the puzzle button it came out of.
+                extensions.menuOpen = false
+                let id = button.id
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { extensions.press(id) }
+            }
+            .onHover { hovering = $0 }
+            .help(button.label)
+            .contextMenu { ExtensionActions(id: button.id, name: button.name, extensions: extensions) }
+        }
+    }
+
+    /// A small icon button at the end of a row.
+    private struct Tool: View {
+        let symbol: String
+        let help: String
+        var on = false
+        let act: () -> Void
+        @State private var hovering = false
+
+        var body: some View {
+            SwiftUI.Button(action: act) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(on || hovering ? Palette.ink : Palette.muted)
+                    .frame(width: 22, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(hovering ? Palette.hover : .clear))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help(help)
+        }
+    }
+
+    private struct Foot: View {
+        let symbol: String
+        let title: String
+        let act: () -> Void
+        @State private var hovering = false
+
+        init(_ symbol: String, _ title: String, act: @escaping () -> Void) {
+            self.symbol = symbol
+            self.title = title
+            self.act = act
+        }
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(Palette.muted).frame(width: 14)
+                Text(title).font(.system(size: 12.5)).foregroundStyle(Palette.ink)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(hovering ? Palette.wash : .clear))
+            .contentShape(Rectangle())
+            .onTapGesture(perform: act)
+            .onHover { hovering = $0 }
         }
     }
 }

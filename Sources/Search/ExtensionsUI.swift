@@ -71,7 +71,7 @@ struct ExtensionsPage: View {
                 }
 
                 Card {
-                    Line("Load an unpacked extension", "A folder with a manifest.json — your own, or one exported from another browser") {
+                    Line("Load an unpacked extension", "A folder with a manifest.json — your own, or one exported from another browser. Reload picks up what you've changed in it since.") {
                         Pill("Choose…") { extensions.installFolder() }
                     }
                 }
@@ -111,9 +111,13 @@ struct ExtensionsPage: View {
                         .font(.system(size: 11.5))
                         .foregroundStyle(Palette.muted)
                         .lineLimit(1)
+                        .help(item.source ?? "")
                 }
                 Spacer(minLength: 8)
                 if hovering {
+                    if item.source != nil || !item.fromStore {
+                        Quick("Reload") { extensions.reload(item.id) }
+                    }
                     if context?.optionsPageURL != nil {
                         Quick("Options") { extensions.openOptions(item.id) }
                     }
@@ -127,8 +131,14 @@ struct ExtensionsPage: View {
             .onHover { hovering = $0 }
         }
 
+        /// Where it was loaded from, by the folder's name — the whole path
+        /// is in the tooltip.
+        private var folder: String {
+            item.source.map { "From “\(URL(fileURLWithPath: $0).lastPathComponent)”" } ?? "From a folder"
+        }
+
         private func detail(_ context: WKWebExtensionContext?) -> String {
-            var parts = ["Version \(item.version)", item.fromStore ? "Chrome Web Store" : "From a folder"]
+            var parts = ["Version \(item.version)", item.fromStore ? "Chrome Web Store" : folder]
             if item.enabled, context == nil { parts.append("couldn't start") }
             if let errors = context?.errors, !errors.isEmpty { parts.append("\(errors.count) warning\(errors.count == 1 ? "" : "s")") }
             return parts.joined(separator: " · ")
