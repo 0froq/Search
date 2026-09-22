@@ -5,6 +5,8 @@
     ./bench open URL                   a bench tab at the end of the row → its id
     ./bench go ID URL                  send a bench tab somewhere else
     ./bench wait ID [SECONDS]          until the page has loaded
+    ./bench sleep ID                   put a tab to sleep now, or say what keeps it awake
+    ./bench select ID                  bring a tab to the front — --test runs only
     ./bench text ID                    the page's text
     ./bench eval ID JS                 run JavaScript, print what it returns
     ./bench click ID SELECTOR
@@ -65,7 +67,7 @@ def main(argv):
         if not args: sys.exit("usage: bench wait ID [SECONDS]")
         request["id"] = args[0]
         if len(args) > 1: request["seconds"] = float(args[1])
-    elif verb in ("text", "close"):
+    elif verb in ("text", "close", "sleep", "select"):
         if len(args) != 1: sys.exit(f"usage: bench {verb} ID")
         request["id"] = args[0]
     elif verb == "eval":
@@ -106,7 +108,7 @@ def main(argv):
     elif verb == "tabs":
         for tab in answer.get("tabs", []):
             mark = "⚗" if tab.get("bench") else ("●" if tab.get("active") else " ")
-            state = " …" if tab.get("loading") else ""
+            state = " …" if tab.get("loading") else (" z" if tab.get("asleep") else "")
             print(f"{mark} {tab['id']}  {tab.get('title') or '—'}  {tab.get('url')}{state}")
     else:
         print(json.dumps(answer, ensure_ascii=False, indent=2))

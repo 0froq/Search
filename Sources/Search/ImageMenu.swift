@@ -112,7 +112,7 @@ extension Browser {
     /// WKNavigationDelegate to ask for one on its own.
     func downloadImage(at url: URL, from webView: WKWebView) {
         webView.startDownload(using: URLRequest(url: url)) { [weak self] download in
-            download.delegate = self
+            self?.keep(download)
         }
     }
 }

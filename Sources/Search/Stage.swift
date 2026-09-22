@@ -18,6 +18,19 @@ struct Page: View {
             // would build an empty one a frame before the stage moves on.
             WebStage(page: tab.isBlank || tab.asleep ? nil : tab.web)
 
+            if let cover = tab.cover {
+                // The page as it was left, while it is rebuilt underneath —
+                // anchored where the page itself starts, and never in the
+                // way of a click meant for the page.
+                Image(nsImage: cover)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .clipped()
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+
             if tab.floating {
                 // The tab is not empty, its page is simply elsewhere. Saying so
                 // is kinder than a white rectangle.
@@ -48,6 +61,7 @@ struct Page: View {
         }
         .animation(Motion.quick, value: tab.failure)
         .animation(Motion.quick, value: tab.floating)
+        .animation(.easeOut(duration: 0.2), value: tab.cover == nil)
         .animation(.easeOut(duration: 0.16), value: tab.pull == nil)
     }
 }

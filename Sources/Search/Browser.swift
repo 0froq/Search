@@ -9,7 +9,15 @@ import Combine
 @MainActor
 final class Browser: NSObject, ObservableObject {
     @Published private(set) var tabs: [Tab] = []
-    @Published var activeID: Tab.ID?
+    @Published var activeID: Tab.ID? {
+        didSet {
+            // The tab just left is the tab just looked at. Whether a tab has
+            // gone unwatched long enough to sleep is counted from here, not
+            // from when it was first picked.
+            guard oldValue != activeID, let old = oldValue else { return }
+            tabs.first { $0.id == old }?.touch()
+        }
+    }
 
     /// The tab whose page is currently out in the little window. Nothing
     /// floating means no window: the two are checked against each other rather
@@ -603,6 +611,12 @@ final class Browser: NSObject, ObservableObject {
     }
 
     private var bag = Set<AnyCancellable>()
+    /// The minute-by-minute look for tabs to put to sleep, and the ear for
+    /// macOS saying memory is short. See Sleep.swift.
+    var dozing: Timer?
+    var pressure: DispatchSourceMemoryPressure?
+    /// Downloads still under way. See `keep(_:)`.
+    var downloading: [WKDownload] = []
     private var hush: DispatchWorkItem?
     private var zoomShown = 100
     private var remembering = false
@@ -684,7 +698,10 @@ final class Browser: NSObject, ObservableObject {
         // now, which starts a content process while the window is still being
         // drawn — so the first address you type navigates instead of waiting
         // for WebKit to get up.
-        defer { follow() }
+        defer {
+            follow()
+            watchForSleep()
+        }
 
         let saved = Session.read()
         guard !saved.tabs.isEmpty else {
@@ -1573,7 +1590,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         navigationAction: WKNavigationAction,
         didBecome download: WKDownload
     ) {
-        download.delegate = self
+        keep(download)
     }
 
     func webView(
@@ -1581,7 +1598,14 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         navigationResponse: WKNavigationResponse,
         didBecome download: WKDownload
     ) {
+        keep(download)
+    }
+
+    /// Every download this window has going, heard from until it ends — and
+    /// counted, so a tab still sending one to disk is never put to sleep.
+    func keep(_ download: WKDownload) {
         download.delegate = self
+        downloading.append(download)
     }
 
     /// Without this WebKit refuses every request out of hand, and a page that
@@ -1658,10 +1682,14 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         // Whatever you last set this site to, before it draws a single frame
         // at the wrong size.
         tab.applyRememberedZoom()
+        // A tab waking from sleep: the new document is in, and a moment
+        // after it is on screen the picture of the old one can go.
+        tab.uncover(after: 0.45)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let tab = tab(for: webView), let url = tab.address else { return }
+        tab.uncover()
         // A page that arrived after a password went out: did the sign-in take?
         tab.settleSignIn()
         // The icon is asked for whether or not the tab is showing one: it may
@@ -1673,6 +1701,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
     }
 
     private func fail(_ webView: WKWebView, _ error: Error) {
+        tab(for: webView)?.uncover()
         let code = (error as NSError).code
         // Cancelled is not a failure: it's what a redirect, a stopped load, or
         // a second Return in quick succession looks like from here.
@@ -1732,6 +1761,7 @@ extension Browser: WKDownloadDelegate {
     }
 
     func downloadDidFinish(_ download: WKDownload) {
+        downloading.removeAll { $0 === download }
         guard let file = download.progress.fileURL else {
             announce("Download finished")
             return
@@ -1752,6 +1782,7 @@ extension Browser: WKDownloadDelegate {
         didFailWithError error: Error,
         resumeData: Data?
     ) {
+        downloading.removeAll { $0 === download }
         announce("Download failed")
     }
 

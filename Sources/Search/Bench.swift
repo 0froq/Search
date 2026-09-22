@@ -236,6 +236,23 @@ final class Bench {
             let limit = Date().addingTimeInterval(request["seconds"] as? Double ?? 20)
             wait(for: tab, until: limit, answer)
 
+        case "sleep":
+            // Now rather than after half an hour, but past every other check
+            // a tab has to clear — the answer says which one kept it awake.
+            guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+            browser.sleep(tab) { said in answer(["said": said, "asleep": tab.asleep]) }
+
+        case "select":
+            // Picking a tab takes the window over, which the bench never does
+            // to someone using it: only on a SEARCH_PROBE run.
+            guard Store.testing else {
+                answer(["error": "select only works on a --test run — it would take your window over"])
+                return
+            }
+            guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+            browser.select(tab)
+            answer(describe(tab))
+
         case "text":
             guard let tab = find(request, in: browser) else { answer(missing(request)); return }
             house(tab)
@@ -330,7 +347,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "text", "eval", "click", "type", "submit", "shot", "probe", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "ui",
             ]])
         }
     }
@@ -354,6 +371,7 @@ final class Bench {
             "view": tab.built?.url?.absoluteString ?? "",
             "bench": tab.bench,
             "active": tab.id == browser?.activeID,
+            "asleep": tab.asleep,
         ]
     }
 

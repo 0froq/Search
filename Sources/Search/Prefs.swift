@@ -50,6 +50,11 @@ final class Preferences: ObservableObject {
     @Published var glyph: Glyph {
         didSet { store.set(glyph.rawValue, forKey: "glyph") }
     }
+    /// Tabs nobody has looked at for half an hour give their page back and
+    /// keep where they were. On unless turned off.
+    @Published var sleepsTabs: Bool {
+        didSet { store.set(sleepsTabs, forKey: "tabs.sleep") }
+    }
     /// The ad blocker. On unless turned off; there is nothing else to it.
     @Published var shielded: Bool {
         didSet { store.set(shielded, forKey: "shield") }
@@ -118,6 +123,7 @@ final class Preferences: ObservableObject {
         let width = store.object(forKey: "sidebar.width") as? Double ?? Double(Metrics.side)
         sideWidth = min(Metrics.sideMax, max(Metrics.sideMin, CGFloat(width)))
         glyph = store.string(forKey: "glyph").flatMap(Glyph.init) ?? .letters
+        sleepsTabs = store.object(forKey: "tabs.sleep") as? Bool ?? true
         shielded = store.object(forKey: "shield") as? Bool ?? true
         // Offered by default only in a build that can actually do them —
         // one with Apple's browser entitlement and its profile embedded. A

@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 import WebKit
 
@@ -5,6 +6,10 @@ import WebKit
 // takes the old view out of the window and puts the new one in — the page does
 // not reload, does not lose its scroll position, and does not forget what you
 // typed into it. That is the whole trick behind switching feeling instant.
+//
+// Kept alive, that is, while it is worth what it costs. A tab nobody has
+// looked at for half an hour gives its view back (see `sleep(picture:)`) and
+// keeps what it takes to come back exactly where it was.
 
 enum Web {
     /// Modern WebKit pools processes by data store on its own — every tab
@@ -210,6 +215,16 @@ final class Tab: ObservableObject, Identifiable {
     /// second with twenty tabs and one that doesn't.
     private(set) var pending: URL?
 
+    /// For a tab put to sleep for not being looked at: the page's own history
+    /// — the back list, the page, where it was scrolled to — handed to the
+    /// view built to wake it, so it opens exactly where this one was left.
+    private var memory: Any?
+    /// The last picture of that page, compressed, for the moment it wakes.
+    private var picture: Data?
+    /// That picture, over the stage while the page is rebuilt underneath it:
+    /// coming back to a tab that slept starts from what you left, not white.
+    @Published private(set) var cover: NSImage?
+
     private var watch: [NSKeyValueObservation] = []
 
     /// A tab that has never been anywhere shows the address field instead of a
@@ -243,6 +258,7 @@ final class Tab: ObservableObject, Identifiable {
         // PageView, and it moves nothing but a disc.
         web.allowsBackForwardNavigationGestures = false
         web.onPull = { [weak self] pull in self?.pull = pull }
+        web.onTouch = { [weak self] in self?.uncover() }
         // Pages follow the appearance of the window they are drawn in, and the
         // window follows Settings › Appearance — so a site that honours
         // prefers-color-scheme goes dark with the frame, and not otherwise.
@@ -507,6 +523,12 @@ final class Tab: ObservableObject, Identifiable {
         reader = false
         typing = false
         immersed = false
+        // Sent somewhere new, a sleeping tab is simply awake again — with
+        // nothing of where it was before to bring back.
+        pending = nil
+        memory = nil
+        picture = nil
+        cover = nil
         adoptIcon()
         web.load(URLRequest(url: url))
     }
@@ -530,6 +552,8 @@ final class Tab: ObservableObject, Identifiable {
     func rest() {
         guard let url = address else { return }
         pending = url
+        memory = nil
+        picture = nil
         reading = 0
         lastY = 0
         noisy = false
@@ -543,6 +567,70 @@ final class Tab: ObservableObject, Identifiable {
         // gave up and reloaded by hand. Only tearing the view down ends the
         // page; the next wake() builds a fresh one, and a fresh one boots.
         discard()
+    }
+
+    /// Nobody has looked at this page for a while. Its view goes, as with a
+    /// pin put down by hand, but its history and a picture of it stay: the
+    /// view built to wake it opens the same page, at the same place, with
+    /// Back still going back. What was typed and not sent is the one thing
+    /// that can't come back, which is why the browser asks `unsaved` first.
+    func sleep(picture: Data?) {
+        guard let url = address, let built else { return }
+        memory = built.interactionState
+        self.picture = picture
+        pending = url
+        stale = false
+        pull = nil
+        discard()
+    }
+
+    /// Whether the page holds something typed and not yet sent — a draft, a
+    /// half-filled form. A page that can't answer is treated as holding
+    /// nothing: a PDF, an image, a page whose process has already gone.
+    func unsaved(_ done: @escaping (Bool) -> Void) {
+        guard let built else { return done(false) }
+        built.evaluateJavaScript(
+            "!!(window.__officeForms && window.__officeForms.unsaved && window.__officeForms.unsaved())"
+        ) { value, _ in
+            MainActor.assumeIsolated { done((value as? Bool) == true) }
+        }
+    }
+
+    /// The page as it looks right now, compressed. Drawn by the page's own
+    /// process, so a view that is off screen — every tab but the one you are
+    /// on — can still be pictured. Nil when there is nothing to draw.
+    func snapshot(_ done: @escaping (Data?) -> Void) {
+        guard let built else { return done(nil) }
+        built.takeSnapshot(with: nil) { image, _ in
+            guard let image, let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                return done(nil)
+            }
+            DispatchQueue.global(qos: .utility).async {
+                let data = Tab.jpeg(cg)
+                DispatchQueue.main.async { done(data) }
+            }
+        }
+    }
+
+    nonisolated private static func jpeg(_ image: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let out = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(out, image, [kCGImageDestinationLossyCompressionQuality: 0.55] as CFDictionary)
+        return CGImageDestinationFinalize(out) ? data as Data : nil
+    }
+
+    /// The picture comes off the moment there is something better under it
+    /// — the page, painted — or you reach for the page yourself.
+    func uncover(after delay: TimeInterval = 0) {
+        guard let shown = cover else { return }
+        guard delay > 0 else {
+            cover = nil
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.cover === shown else { return }
+            self.cover = nil
+        }
     }
 
     /// Set when WebKit said the page's process went away while nobody was
@@ -570,7 +658,7 @@ final class Tab: ObservableObject, Identifiable {
     /// take — no error, no navigation, just a view that goes on sitting on
     /// about:blank with nothing left to say so. Still there, or still
     /// answering for a process that's already gone, is asked once more.
-    private func loadAndVerify(_ url: URL, tries: Int = 0) {
+    private func loadAndVerify(_ url: URL, state: Any? = nil, tries: Int = 0) {
         // Wait for the stage to take the view back before loading into it. A
         // page loaded while its view is off any window boots as a hidden tab,
         // and a site that holds everything until it is shown — x.com does,
@@ -584,11 +672,18 @@ final class Tab: ObservableObject, Identifiable {
         let view = web
         if view.window == nil, tries < 50 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
-                self?.loadAndVerify(url, tries: tries + 1)
+                self?.loadAndVerify(url, state: state, tries: tries + 1)
             }
             return
         }
-        view.load(URLRequest(url: url))
+        // A tab that slept has its own history to go back to — the page, its
+        // back list and its scroll position, in one. Anything else starts
+        // from the address.
+        if let state {
+            view.interactionState = state
+        } else {
+            view.load(URLRequest(url: url))
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             guard let self else { return }
             guard built?.url?.absoluteString != "about:blank" else {
@@ -651,7 +746,15 @@ final class Tab: ObservableObject, Identifiable {
         reader = false
         typing = false
         immersed = false
-        loadAndVerify(url)
+        let state = memory
+        memory = nil
+        if let picture, let image = NSImage(data: picture) {
+            cover = image
+            // Whatever happens to the page, the picture doesn't outstay it.
+            uncover(after: 4)
+        }
+        picture = nil
+        loadAndVerify(url, state: state)
         return true
     }
 
@@ -721,6 +824,7 @@ final class Tab: ObservableObject, Identifiable {
         controller.removeScriptMessageHandler(forName: ImageRelay.name)
         controller.removeAllUserScripts()
         web.onPull = nil
+        web.onTouch = nil
         web.stopLoading()
         web.navigationDelegate = nil
         web.uiDelegate = nil
@@ -772,6 +876,14 @@ final class AudioWatch: NSObject {
 final class PageView: WKWebView {
     /// Told where a sideways swipe has got to, and nil when there is none.
     var onPull: ((Pull?) -> Void)?
+    /// Told the moment the page is reached for — a click, a scroll — so the
+    /// picture of a tab waking up never stands between you and the page.
+    var onTouch: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onTouch?()
+        super.mouseDown(with: event)
+    }
 
     // MARK: - two fingers sideways
 
@@ -880,6 +992,7 @@ final class PageView: WKWebView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        onTouch?()
         // The page gets every event first and scrolls as it always did. The
         // swipe is only read, never taken.
         super.scrollWheel(with: event)
