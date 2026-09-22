@@ -298,6 +298,7 @@ struct ContentView: View {
                 keepAsking(offer)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+            StoreOffer(browser: browser)
             if browser.veiling {
                 hint("Click anything to hide it   ⌘Z undo   esc done")
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -697,6 +698,13 @@ struct ContentView: View {
                 return true
             }
             browser.step(flags.contains(.shift) ? -1 : 1)
+            return true
+        }
+
+        // A shortcut an extension registered — ⌥⇧D, ⌃⇧Y — before ours, since
+        // none of ours use those.
+        if #available(macOS 15.4, *), !flags.intersection([.command, .option, .control]).isEmpty,
+           Extensions.shared.take(event) {
             return true
         }
 

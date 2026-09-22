@@ -164,6 +164,49 @@ final class Bookmarks: ObservableObject {
 
     private static var file: URL { Store.file("bookmarks.json") }
 
+    // MARK: - for extensions
+
+    /// A page or a folder filed under `parent`, or at the top level for nil
+    /// or a folder that isn't there. What chrome.bookmarks.create does.
+    @discardableResult
+    func insert(_ node: Bookmark, into parent: Bookmark.ID?) -> Bookmark {
+        if let parent {
+            var nodes = roots
+            if Bookmarks.insert(node, into: parent, nodes: &nodes) {
+                roots = nodes
+                save()
+                return node
+            }
+        }
+        roots.append(node)
+        save()
+        return node
+    }
+
+    /// A new title or address for one that is kept. chrome.bookmarks.update.
+    func update(_ id: Bookmark.ID, title: String?, url: String?) {
+        func walk(_ nodes: inout [Bookmark]) -> Bool {
+            for i in nodes.indices {
+                if nodes[i].id == id {
+                    if let title { nodes[i].title = title }
+                    if let url, !nodes[i].isFolder { nodes[i].url = url }
+                    return true
+                }
+                guard var kids = nodes[i].children else { continue }
+                if walk(&kids) {
+                    nodes[i].children = kids
+                    return true
+                }
+            }
+            return false
+        }
+        var nodes = roots
+        if walk(&nodes) {
+            roots = nodes
+            save()
+        }
+    }
+
     private func load() {
         guard let data = try? Data(contentsOf: Bookmarks.file) else { return }
         guard let list = try? JSONDecoder().decode([Bookmark].self, from: data) else {

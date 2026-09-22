@@ -627,6 +627,7 @@ final class Browser: NSObject, ObservableObject {
         super.init()
         Shield.shared.enabled = prefs.shielded
         Shield.shared.compile()
+        if #available(macOS 15.4, *) { Extensions.shared.start(for: self) }
         if prefs.bench { Bench.shared.start(for: self) }
         welcoming = !prefs.welcomed
         // Once a day, quietly: is there a newer one?
@@ -1046,7 +1047,9 @@ final class Browser: NSObject, ObservableObject {
     /// order it came in.
     @discardableResult
     func open(_ url: URL, foreground: Bool, atEnd: Bool = false) -> Tab {
-        let tab = Tab()
+        // An extension's own page is served only to a view built from that
+        // extension's configuration.
+        let tab = Tab(configuration: Browser.extensionConfiguration(for: url))
         prepare(tab)
         let here = atEnd ? nil : tabs.firstIndex { $0.id == activeID }
         tabs.insert(tab, at: here.map { $0 + 1 } ?? tabs.count)
@@ -1060,11 +1063,17 @@ final class Browser: NSObject, ObservableObject {
         return tab
     }
 
+    /// The configuration for a webkit-extension:// page, or nil for anything else.
+    static func extensionConfiguration(for url: URL) -> WKWebViewConfiguration? {
+        guard url.scheme == "webkit-extension", #available(macOS 15.4, *) else { return nil }
+        return Extensions.shared.controller.extensionContext(for: url)?.webViewConfiguration
+    }
+
     /// A page for the bench: at the end of the row, behind whatever you are
     /// looking at, and marked as not yours.
     @discardableResult
     func benchOpen(_ url: URL) -> Tab {
-        let tab = Tab(bench: true)
+        let tab = Tab(bench: true, configuration: Browser.extensionConfiguration(for: url))
         prepare(tab)
         tabs.append(tab)
         tab.go(to: url)
@@ -1525,6 +1534,13 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
             return
         }
 
+        // An extension's OAuth sign-in coming back: the address is the
+        // answer, handed to the extension, and never loaded.
+        if ExtensionAuth.intercept(url, browser: self) {
+            decisionHandler(.cancel)
+            return
+        }
+
         // ⌘-click opens beside this tab and leaves you where you are; ⌘⇧-click
         // takes you with it. Middle-click does what ⌘-click does, for hands
         // that learned it that way.
@@ -1547,7 +1563,9 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
             Shield.shared.tune(webView.configuration.userContentController, for: host)
         }
 
-        if ["http", "https", "file", "about", "data", "blob"].contains(scheme) {
+        // webkit-extension: an extension's own pages — options, a side
+        // panel, a tab it opened. WebKit serves them; nothing else here does.
+        if ["http", "https", "file", "about", "data", "blob", "webkit-extension"].contains(scheme) {
             decisionHandler(.allow)
         } else {
             NSWorkspace.shared.open(url)

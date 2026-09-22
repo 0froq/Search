@@ -22,6 +22,9 @@ enum Web {
         // shy tab gets its own store, which exists only while it does — its own
         // cookies, its own sign-ins, and nothing left behind when it closes.
         config.websiteDataStore = shy ? .nonPersistent() : Store.websites
+        // Chrome extensions see every page but a private one. The controller
+        // has to be there when the view is made; it can't be added after.
+        if #available(macOS 15.4, *), !shy { MainActor.assumeIsolated { Extensions.attach(config) } }
         // Left alone, WKWebView says only "AppleWebKit … (KHTML, like Gecko)" —
         // no browser, no version. Google reads that as something it doesn't
         // recognise and serves the stripped-back page from a decade ago:
@@ -874,6 +877,18 @@ final class AudioWatch: NSObject {
 
 /// A web view that reads the two-finger swipe for itself.
 final class PageView: WKWebView {
+    /// What extensions added to the right-click menu, at the end of it.
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        guard #available(macOS 15.4, *),
+              let tab = Extensions.shared.browser?.tabs.first(where: { $0.built === self })
+        else { return }
+        let items = Extensions.shared.menuItems(for: tab)
+        guard !items.isEmpty else { return }
+        menu.addItem(.separator())
+        items.forEach { menu.addItem($0) }
+    }
+
     /// Told where a sideways swipe has got to, and nil when there is none.
     var onPull: ((Pull?) -> Void)?
     /// Told the moment the page is reached for — a click, a scroll — so the

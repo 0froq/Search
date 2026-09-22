@@ -15,6 +15,13 @@
     ./bench shot ID [PATH] [WIDTH]     a PNG of the page → its path
     ./bench close ID | all             only tabs the bench opened
     ./bench probe                      the window's own state: panels, modal, windows
+    ./bench extensions                 installed extensions, loaded or not, with their warnings
+    ./bench ext-add ID|LINK [--yes]    install from the Chrome Web Store (--yes only in a --test run)
+    ./bench ext-folder PATH [--yes]    install an unpacked extension
+    ./bench ext-press ID               press its button
+    ./bench ext-page ID [PATH]         one of its pages in a bench tab → tab id, for eval
+    ./bench ext-popup ID JS            run JavaScript in its popup while it is open
+    ./bench ext-remove ID
     ./bench ui KEY VALUE               settings/passwords/welcome/history/downloads/bookmarks/hidden on|off,
                                        look light|dark|system, sidebar on|off
 
@@ -51,7 +58,8 @@ def ask(path, request):
 
 def main(argv):
     test = "--test" in argv
-    argv = [a for a in argv if a != "--test"]
+    yes = "--yes" in argv
+    argv = [a for a in argv if a not in ("--test", "--yes")]
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(__doc__.strip())
         return 0
@@ -88,7 +96,22 @@ def main(argv):
         if len(args) != 2: sys.exit("usage: bench ui KEY VALUE")
         key, value = args
         request[key] = value if key == "look" else value in ("on", "true", "1", "yes")
-    elif verb not in ("tabs", "probe"):
+    elif verb in ("ext-add", "ext-press", "ext-remove"):
+        if len(args) != 1: sys.exit(f"usage: bench {verb} ID")
+        request["id"] = args[0]
+        request["yes"] = yes
+    elif verb == "ext-folder":
+        if len(args) != 1: sys.exit("usage: bench ext-folder PATH")
+        request["path"] = os.path.abspath(args[0])
+        request["yes"] = yes
+    elif verb == "ext-popup":
+        if len(args) != 2: sys.exit("usage: bench ext-popup ID JS")
+        request["id"], request["js"] = args
+    elif verb == "ext-page":
+        if not args: sys.exit("usage: bench ext-page ID [PATH]")
+        request["id"] = args[0]
+        request["path"] = args[1] if len(args) > 1 else ""
+    elif verb not in ("tabs", "probe", "extensions"):
         sys.exit(f"unknown command “{verb}” — see bench help")
 
     answer = ask(os.path.join(folder(test), "bench.sock"), request)
@@ -100,9 +123,9 @@ def main(argv):
             print("\n[… truncated]", file=sys.stderr)
     elif verb == "shot":
         print(answer["path"])
-    elif verb == "open":
+    elif verb in ("open", "ext-page"):
         print(answer["id"])
-    elif verb == "eval":
+    elif verb in ("eval", "ext-popup"):
         value = answer.get("value")
         print(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2))
     elif verb == "tabs":
