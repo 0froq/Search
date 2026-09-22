@@ -801,13 +801,30 @@ final class PageView: WKWebView {
 
     // MARK: - two fingers together
 
+    /// Where the page is scrolled to, in CSS pixels, as it last said through
+    /// ScrollRelay. Read once when a pinch starts, so that nothing has to be
+    /// asked of the page while the fingers are moving.
+    var contentScroll = CGPoint.zero
+
+    private var pinchOrigin = NSPoint.zero
+    private var pinchScroll = CGPoint.zero
+    private var pinchScale: CGFloat = 1
+
     /// The pinch, applied here rather than left to WebKit's own handling.
     /// WebKit answers the first event of a pinch by asking the page's process
     /// for its geometry, and throws away every movement that arrives before
     /// the reply — on a page busy with its own work that is often the whole
     /// gesture, which is a pinch that did nothing until you tried it again.
-    /// Setting the magnification directly needs no reply from anyone. The
-    /// same public property ⌘0 already resets, so nothing else changes.
+    /// Setting the magnification directly needs no reply from anyone; the
+    /// same public property ⌘0 already resets.
+    ///
+    /// Two things that property does not do on its own: it ignores the point
+    /// it is given, and it sends the scroll back to the top-left corner every
+    /// time it changes. So each step is the scale first and, right behind it,
+    /// the scroll that puts the spot under the fingers back where it was —
+    /// worked out from where the pinch started, since a page's own word on
+    /// its scroll position is a round trip away.
+    ///
     /// `allowsMagnification` stays the switch it always was: the floating
     /// window turns it off to size itself with the pinch instead, and off
     /// means the event goes past this view as it did before.
@@ -816,10 +833,92 @@ final class PageView: WKWebView {
             super.magnify(with: event)
             return
         }
-        guard event.phase == .began || event.phase == .changed else { return }
+        switch event.phase {
+        case .began:
+            pinchOrigin = convert(event.locationInWindow, from: nil)
+            pinchScroll = contentScroll
+            pinchScale = magnification
+        case .changed:
+            break
+        default:
+            return
+        }
         let wanted = min(3, max(1, magnification * (1 + event.magnification)))
         guard abs(wanted - magnification) > 0.0005 else { return }
-        setMagnification(wanted, centeredAt: convert(event.locationInWindow, from: nil))
+        setMagnification(wanted, centeredAt: pinchOrigin)
+        let x = pinchScroll.x + pinchOrigin.x * (1 / pinchScale - 1 / wanted)
+        let y = pinchScroll.y + pinchOrigin.y * (1 / pinchScale - 1 / wanted)
+        evaluateJavaScript("window.scrollTo(\(max(0, x)), \(max(0, y)))")
+    }
+
+    /// Two fingers, tapped twice: the block under them fills the width, the
+    /// way Safari's smart zoom does; tapped again, the page is back at its
+    /// own size with the same spot still under the fingers. The page picks
+    /// the block — it is the only one that knows where a column ends.
+    override func smartMagnify(with event: NSEvent) {
+        guard allowsMagnification else {
+            super.smartMagnify(with: event)
+            return
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        let js = PageView.smart(x: point.x, y: point.y, scale: magnification, width: bounds.width)
+        evaluateJavaScript(js) { [weak self] value, _ in
+            MainActor.assumeIsolated {
+                guard let self, let text = value as? String, let data = text.data(using: .utf8),
+                      let zoom = try? JSONDecoder().decode(SmartZoom.self, from: data)
+                else { return }
+                self.setMagnification(zoom.scale, centeredAt: point)
+                self.evaluateJavaScript("window.scrollTo(\(zoom.x), \(zoom.y))")
+            }
+        }
+    }
+
+    private struct SmartZoom: Decodable {
+        var scale: CGFloat
+        var x: CGFloat
+        var y: CGFloat
+    }
+
+    /// Where a smart zoom should land: the scale that fits the block under
+    /// the fingers to the width, and the scroll that puts it there with the
+    /// tapped spot at the same height. Zoomed in already, it is the way back.
+    /// Scroll positions are CSS pixels of the whole page — `window.scrollTo`
+    /// moves the magnified view here even on a page whose own overflow is
+    /// hidden — and they are read before the scale changes, since the
+    /// change itself sends the scroll to the corner.
+    static func smart(x: CGFloat, y: CGFloat, scale: CGFloat, width: CGFloat) -> String {
+        """
+        (function (x, y, s, W) {
+          var ox = window.scrollX, oy = window.scrollY;
+          var cx = x / s, cy = y / s;
+          if (s > 1.05) {
+            return JSON.stringify({ scale: 1, x: Math.max(0, ox + cx - x), y: Math.max(0, oy + cy - y) });
+          }
+          var el = document.elementFromPoint(cx, cy);
+          if (!el) return null;
+          // The innermost block wide enough to be a column of something — a
+          // paragraph's column, a card, a feed — rather than the whole page's
+          // layout, which is what walking up to a wide ancestor finds.
+          var vw = W / s, best = null, enough = Math.max(240, vw * 0.2);
+          for (var e = el; e && e !== document.documentElement; e = e.parentElement) {
+            var r = e.getBoundingClientRect();
+            if (r.width < 80 || r.height < 16) continue;
+            var d = getComputedStyle(e).display;
+            if (d === 'inline' || d === 'contents') continue;
+            if (!best) best = r;
+            if (r.width >= enough) { best = r; break; }
+          }
+          if (!best) best = el.getBoundingClientRect();
+          var pad = 12;
+          var target = Math.max(1, Math.min(3, W / (best.width + 2 * pad)));
+          if (target < 1.15) target = Math.min(3, s * 2);
+          return JSON.stringify({
+            scale: target,
+            x: Math.max(0, ox + best.left - pad),
+            y: Math.max(0, oy + cy - y / target)
+          });
+        })(\(x), \(y), \(scale), \(width))
+        """
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -980,19 +1079,25 @@ final class ScrollRelay: NSObject, WKScriptMessageHandler {
         guard let y = body["y"] as? Double,
               let ceiling = body["max"] as? Double
         else { return }
-        MainActor.assumeIsolated { tab?.scrolled(to: y, of: ceiling) }
+        let x = body["x"] as? Double ?? 0
+        MainActor.assumeIsolated {
+            tab?.built?.contentScroll = CGPoint(x: x, y: y)
+            tab?.scrolled(to: y, of: ceiling)
+        }
     }
 
     /// Reports at most once a frame, and passively, so a page that scrolls
-    /// smoothly without us keeps scrolling smoothly with us.
+    /// smoothly without us keeps scrolling smoothly with us. Both axes: the
+    /// pinch needs to know where the page is across as well as down.
     static let script = """
     (function () {
       var waiting = false;
       function tell() {
         var root = document.documentElement;
+        var x = window.scrollX || root.scrollLeft || 0;
         var y = window.scrollY || root.scrollTop || 0;
         var ceiling = Math.max(1, (root.scrollHeight || 0) - window.innerHeight);
-        window.webkit.messageHandlers.\(name).postMessage({ y: y, max: ceiling });
+        window.webkit.messageHandlers.\(name).postMessage({ x: x, y: y, max: ceiling });
       }
       window.addEventListener('scroll', function () {
         if (waiting) return;
