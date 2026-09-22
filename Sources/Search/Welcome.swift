@@ -282,7 +282,7 @@ struct WelcomePanel: View {
         let size: CGFloat
         var body: some View {
             Logomark()
-                .fill(Palette.ink)
+                .fill(Palette.ink, style: FillStyle(eoFill: true))
                 .aspectRatio(Logomark.canvas.width / Logomark.canvas.height, contentMode: .fit)
                 .frame(height: size * 0.56)
         }
