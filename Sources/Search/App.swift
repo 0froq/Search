@@ -557,20 +557,6 @@ struct ContentView: View {
         return browser.prefs.sidebar ? 0 : Metrics.strip
     }
 
-    /// An empty toolbar in both modes, for where it puts the lights: set in
-    /// from the corner and centred in a title bar as tall as the strip, the
-    /// way every Mac app with a toolbar has them. The sidebar used to go
-    /// without, and its lights rode up into the corner — eight points further
-    /// left and fourteen higher than the window beside it. The column's first
-    /// row is the strip's height, so its three doors sit on the lights' line.
-    private func fit(_ window: NSWindow) {
-        guard window.toolbar == nil else { return }
-        let toolbar = NSToolbar(identifier: "strip")
-        toolbar.showsBaselineSeparator = false
-        window.toolbar = toolbar
-        window.toolbarStyle = .unified
-    }
-
     /// Put the resting circles in the title bar, exactly over the buttons.
     private func measureLights() {
         guard let window,
@@ -603,11 +589,11 @@ struct ContentView: View {
         // Where you left it, at the size you left it.
         window.setFrameAutosaveName("search")
 
-        // An empty toolbar, purely for its height: the unified style makes the
-        // title bar as tall as the strip, and the traffic lights centre
-        // themselves in it. That is the only way to give the tabs room above
-        // without leaving the three buttons stranded at the top.
-        fit(window)
+        // The traffic lights set in from the corner and centred in the strip's
+        // height, in both modes, without a toolbar's rounder corners — see
+        // Lights.swift. The column's first row is the strip's height too, so
+        // its three doors sit on the lights' line.
+        Lights.keep(window) { measureLights() }
         DispatchQueue.main.async { measureLights() }
 
         // The traffic lights are drawn — measured, they paint themselves — but
