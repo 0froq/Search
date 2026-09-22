@@ -799,6 +799,29 @@ final class PageView: WKWebView {
     /// Less than this and there is nothing to show yet — or nothing left to.
     private static let show: CGFloat = 6
 
+    // MARK: - two fingers together
+
+    /// The pinch, applied here rather than left to WebKit's own handling.
+    /// WebKit answers the first event of a pinch by asking the page's process
+    /// for its geometry, and throws away every movement that arrives before
+    /// the reply — on a page busy with its own work that is often the whole
+    /// gesture, which is a pinch that did nothing until you tried it again.
+    /// Setting the magnification directly needs no reply from anyone. The
+    /// same public property ⌘0 already resets, so nothing else changes.
+    /// `allowsMagnification` stays the switch it always was: the floating
+    /// window turns it off to size itself with the pinch instead, and off
+    /// means the event goes past this view as it did before.
+    override func magnify(with event: NSEvent) {
+        guard allowsMagnification else {
+            super.magnify(with: event)
+            return
+        }
+        guard event.phase == .began || event.phase == .changed else { return }
+        let wanted = min(3, max(1, magnification * (1 + event.magnification)))
+        guard abs(wanted - magnification) > 0.0005 else { return }
+        setMagnification(wanted, centeredAt: convert(event.locationInWindow, from: nil))
+    }
+
     override func scrollWheel(with event: NSEvent) {
         // The page gets every event first and scrolls as it always did. The
         // swipe is only read, never taken.
