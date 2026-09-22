@@ -21,11 +21,11 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
 
     private var popover: NSPopover?
     private var web: WKWebView?
-    /// The popup as WebKit is told about it: the one tab of a window of type
-    /// popup. WebKit only carries a page's messages to the extension's worker
-    /// when it can say which tab the page is in.
+    /// The popup as WebKit is told about it: a page it can find, belonging
+    /// to the browser's window — Chrome gives a popup no window of its own,
+    /// so "the current window" from a popup is the browser's, and so is the
+    /// last focused one.
     private var page: PopupPage?
-    private var holder: PopupWindow?
     private var measuring: Timer?
     private(set) var extensionID: String?
 
@@ -53,12 +53,8 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
         self.web = web
         self.popover = popover
         extensionID = context.uniqueIdentifier
-        let holder = PopupWindow(popover: popover)
-        let page = PopupPage(web: web, holder: holder)
-        holder.page = page
-        self.holder = holder
+        let page = PopupPage(web: web)
         self.page = page
-        Extensions.shared.controller.didOpenWindow(holder)
         Extensions.shared.controller.didOpenTab(page)
 
         if let anchor, anchor.window != nil {
@@ -89,18 +85,13 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
 
     /// Tells WebKit the popup's window and tab are gone.
     private func forget() {
-        let controller = Extensions.shared.controller
-        if let page { controller.didCloseTab(page, windowIsClosing: true) }
-        if let holder { controller.didCloseWindow(holder) }
+        if let page { Extensions.shared.controller.didCloseTab(page, windowIsClosing: false) }
         page = nil
-        holder = nil
         popover = nil
         web = nil
         extensionID = nil
     }
 
-    /// The popup's window, for WebKit's list of open windows.
-    var window: (any WKWebExtensionWindow)? { holder }
 
     private func measure() {
         guard let web, let popover else { return }
@@ -143,44 +134,21 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
     }
 }
 
-/// The popup page, as a tab.
+/// The popup page, as WebKit finds it: in the browser's window, but not
+/// among its tabs — which is where Chrome puts a popup too.
 @available(macOS 15.4, *)
 @MainActor
 final class PopupPage: NSObject, WKWebExtensionTab {
     weak var web: WKWebView?
-    weak var holder: PopupWindow?
 
-    init(web: WKWebView, holder: PopupWindow) {
-        self.web = web
-        self.holder = holder
-    }
+    init(web: WKWebView) { self.web = web }
 
-    func window(for context: WKWebExtensionContext) -> (any WKWebExtensionWindow)? { holder }
-    func indexInWindow(for context: WKWebExtensionContext) -> Int { 0 }
+    func window(for context: WKWebExtensionContext) -> (any WKWebExtensionWindow)? { Extensions.shared.window }
+    func indexInWindow(for context: WKWebExtensionContext) -> Int { NSNotFound }
     func webView(for context: WKWebExtensionContext) -> WKWebView? { web }
     func title(for context: WKWebExtensionContext) -> String? { web?.title }
     func url(for context: WKWebExtensionContext) -> URL? { web?.url }
     func isLoadingComplete(for context: WKWebExtensionContext) -> Bool { !(web?.isLoading ?? false) }
-    func isSelected(for context: WKWebExtensionContext) -> Bool { true }
+    func isSelected(for context: WKWebExtensionContext) -> Bool { false }
     func close(for context: WKWebExtensionContext) async throws { ExtensionPopup.shared.close() }
-}
-
-/// The popup's window: of type popup, holding the one page.
-@available(macOS 15.4, *)
-@MainActor
-final class PopupWindow: NSObject, WKWebExtensionWindow {
-    weak var popover: NSPopover?
-    var page: PopupPage?
-
-    init(popover: NSPopover) { self.popover = popover }
-
-    func tabs(for context: WKWebExtensionContext) -> [any WKWebExtensionTab] { page.map { [$0] } ?? [] }
-    func activeTab(for context: WKWebExtensionContext) -> (any WKWebExtensionTab)? { page }
-    func windowType(for context: WKWebExtensionContext) -> WKWebExtension.WindowType { .popup }
-    func windowState(for context: WKWebExtensionContext) -> WKWebExtension.WindowState { .normal }
-    func isPrivate(for context: WKWebExtensionContext) -> Bool { false }
-    func frame(for context: WKWebExtensionContext) -> CGRect {
-        popover?.contentViewController?.view.window?.frame ?? .null
-    }
-    func screenFrame(for context: WKWebExtensionContext) -> CGRect { NSScreen.main?.frame ?? .null }
 }

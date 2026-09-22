@@ -249,7 +249,7 @@ enum ExtensionShims {
       if (root.addEventListener) {
         const tell = (text) => { try { native("debug.error", [String(text).slice(0, 2000)]).catch(() => {}); } catch (e) {} };
         root.addEventListener("error", (e) => tell((e.message || "error") + " @ " + String(e.filename || "").split("/").slice(3).join("/") + ":" + e.lineno));
-        root.addEventListener("unhandledrejection", (e) => tell("unhandled: " + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+        root.addEventListener("unhandledrejection", (e) => tell("unhandled: " + (e.reason && ((e.reason.message || "") + " — " + (e.reason.stack || "")) || e.reason)));
       }
     })();
     """#

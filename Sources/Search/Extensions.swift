@@ -508,10 +508,8 @@ final class Extensions: NSObject, ObservableObject {
 
 @available(macOS 15.4, *)
 extension Extensions: WKWebExtensionControllerDelegate {
-    /// The browser's window, and a popup's while one is up. The browser's
-    /// comes first: it is the one extensions mean by "the window".
     func webExtensionController(_ controller: WKWebExtensionController, openWindowsFor extensionContext: WKWebExtensionContext) -> [any WKWebExtensionWindow] {
-        [window] + (ExtensionPopup.shared.window.map { [$0] } ?? [])
+        [window]
     }
 
     func webExtensionController(_ controller: WKWebExtensionController, focusedWindowFor extensionContext: WKWebExtensionContext) -> (any WKWebExtensionWindow)? {
