@@ -219,6 +219,15 @@ struct SettingsPanel: View {
                 Line("Fill in sign-ins", "Click a sign-in box and the accounts kept for the site hang from it") {
                     Switch(on: $prefs.fillsPasswords)
                 }
+                Rule()
+                Line(
+                    "Offer passkeys",
+                    prefs.passkeysPossible
+                        ? "Touch ID or an iCloud passkey, on sites that offer one"
+                        : "Needs an Apple entitlement this build doesn't have — off keeps sites to the password"
+                ) {
+                    Switch(on: $prefs.passkeys)
+                }
                 if !Vault.never.isEmpty {
                     Rule()
                     Line("Sites never asked", "\(Vault.never.count) sites told to stop offering") {
@@ -279,10 +288,6 @@ struct SettingsPanel: View {
                             }
                         ))
                     }
-                }
-                Rule()
-                Line("Offer passkeys", "Needs an Apple entitlement this build doesn't have") {
-                    Switch(on: $prefs.passkeys)
                 }
                 Rule()
                 Line("Camera and microphone", "What each site was allowed or refused") {

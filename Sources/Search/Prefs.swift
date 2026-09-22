@@ -1,3 +1,4 @@
+import Security
 import SwiftUI
 
 // Everything there is to set, in one observable place.
@@ -53,10 +54,25 @@ final class Preferences: ObservableObject {
     @Published var shielded: Bool {
         didSet { store.set(shielded, forKey: "shield") }
     }
-    /// Kept claiming passkeys are possible, which they are not without an
-    /// Apple entitlement. Off sends sites to the password instead.
+    /// Whether sites may ask for a passkey here. Off sends them to the
+    /// password instead — the only thing that works in a build without
+    /// Apple's browser entitlement.
     @Published var passkeys: Bool {
         didSet { store.set(passkeys, forKey: "passkeys") }
+    }
+    /// Whether this build can actually do them: signed with the entitlement,
+    /// its profile embedded. Fixed for the life of the process.
+    let passkeysPossible: Bool
+
+    /// Asked of the running process's own signature, which is the only thing
+    /// that decides it — a profile file in the bundle proves nothing on its
+    /// own, and an ad-hoc build has neither.
+    static var entitledToPasskeys: Bool {
+        guard let task = SecTaskCreateFromSelf(nil) else { return false }
+        let value = SecTaskCopyValueForEntitlement(
+            task, "com.apple.developer.web-browser.public-key-credential" as CFString, nil
+        )
+        return (value as? Bool) == true
     }
     @Published var downloads: URL {
         didSet { store.set(downloads.path, forKey: "downloads") }
@@ -104,9 +120,19 @@ final class Preferences: ObservableObject {
         glyph = store.string(forKey: "glyph").flatMap(Glyph.init) ?? .letters
         shielded = store.object(forKey: "shield") as? Bool ?? true
         // Offered by default only in a build that can actually do them —
-        // one with Apple's browser entitlement and its profile embedded.
-        let entitled = Bundle.main.url(forResource: "embedded", withExtension: "provisionprofile") != nil
-        passkeys = store.object(forKey: "passkeys") as? Bool ?? entitled
+        // one with Apple's browser entitlement and its profile embedded. A
+        // choice made while they couldn't work is not a choice about them:
+        // the first run of a build that can offers them, whatever was set
+        // before; from then on the switch is the person's.
+        let entitled = Preferences.entitledToPasskeys
+        passkeysPossible = entitled
+        if entitled, !store.bool(forKey: "passkeys.entitled") {
+            passkeys = true
+            store.set(true, forKey: "passkeys")
+        } else {
+            passkeys = store.object(forKey: "passkeys") as? Bool ?? entitled
+        }
+        store.set(entitled, forKey: "passkeys.entitled")
         downloads = (store.string(forKey: "downloads")).map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         asksWhereToSave = store.bool(forKey: "downloads.ask")
