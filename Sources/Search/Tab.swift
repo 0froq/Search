@@ -801,55 +801,13 @@ final class PageView: WKWebView {
 
     // MARK: - two fingers together
 
-    /// Where the page is scrolled to, in CSS pixels, as it last said through
-    /// ScrollRelay. Read once when a pinch starts, so that nothing has to be
-    /// asked of the page while the fingers are moving.
-    var contentScroll = CGPoint.zero
-
-    private var pinchOrigin = NSPoint.zero
-    private var pinchScroll = CGPoint.zero
-    private var pinchScale: CGFloat = 1
-
-    /// The pinch, applied here rather than left to WebKit's own handling.
-    /// WebKit answers the first event of a pinch by asking the page's process
-    /// for its geometry, and throws away every movement that arrives before
-    /// the reply — on a page busy with its own work that is often the whole
-    /// gesture, which is a pinch that did nothing until you tried it again.
-    /// Setting the magnification directly needs no reply from anyone; the
-    /// same public property ⌘0 already resets.
-    ///
-    /// Two things that property does not do on its own: it ignores the point
-    /// it is given, and it sends the scroll back to the top-left corner every
-    /// time it changes. So each step is the scale first and, right behind it,
-    /// the scroll that puts the spot under the fingers back where it was —
-    /// worked out from where the pinch started, since a page's own word on
-    /// its scroll position is a round trip away.
-    ///
-    /// `allowsMagnification` stays the switch it always was: the floating
-    /// window turns it off to size itself with the pinch instead, and off
-    /// means the event goes past this view as it did before.
-    override func magnify(with event: NSEvent) {
-        guard allowsMagnification else {
-            super.magnify(with: event)
-            return
-        }
-        switch event.phase {
-        case .began:
-            pinchOrigin = convert(event.locationInWindow, from: nil)
-            pinchScroll = contentScroll
-            pinchScale = magnification
-        case .changed:
-            break
-        default:
-            return
-        }
-        let wanted = min(3, max(1, magnification * (1 + event.magnification)))
-        guard abs(wanted - magnification) > 0.0005 else { return }
-        setMagnification(wanted, centeredAt: pinchOrigin)
-        let x = pinchScroll.x + pinchOrigin.x * (1 / pinchScale - 1 / wanted)
-        let y = pinchScroll.y + pinchOrigin.y * (1 / pinchScale - 1 / wanted)
-        evaluateJavaScript("window.scrollTo(\(max(0, x)), \(max(0, y)))")
-    }
+    // The pinch itself is WebKit's own: during the gesture it scales the
+    // rendered layers on the GPU around the fingers and only lays the page
+    // out again once they lift. Doing the same from here — a real change of
+    // scale on every event — was measured at a few frames a second, and the
+    // public `setMagnification(_:centeredAt:)` ignores its point and resets
+    // the scroll besides, so the pinch stays with WebKit. What is handled
+    // here is the one-shot gesture WebKit does not do well on its own.
 
     /// Two fingers, tapped twice: the block under them fills the width, the
     /// way Safari's smart zoom does; tapped again, the page is back at its
@@ -1079,25 +1037,19 @@ final class ScrollRelay: NSObject, WKScriptMessageHandler {
         guard let y = body["y"] as? Double,
               let ceiling = body["max"] as? Double
         else { return }
-        let x = body["x"] as? Double ?? 0
-        MainActor.assumeIsolated {
-            tab?.built?.contentScroll = CGPoint(x: x, y: y)
-            tab?.scrolled(to: y, of: ceiling)
-        }
+        MainActor.assumeIsolated { tab?.scrolled(to: y, of: ceiling) }
     }
 
     /// Reports at most once a frame, and passively, so a page that scrolls
-    /// smoothly without us keeps scrolling smoothly with us. Both axes: the
-    /// pinch needs to know where the page is across as well as down.
+    /// smoothly without us keeps scrolling smoothly with us.
     static let script = """
     (function () {
       var waiting = false;
       function tell() {
         var root = document.documentElement;
-        var x = window.scrollX || root.scrollLeft || 0;
         var y = window.scrollY || root.scrollTop || 0;
         var ceiling = Math.max(1, (root.scrollHeight || 0) - window.innerHeight);
-        window.webkit.messageHandlers.\(name).postMessage({ x: x, y: y, max: ceiling });
+        window.webkit.messageHandlers.\(name).postMessage({ y: y, max: ceiling });
       }
       window.addEventListener('scroll', function () {
         if (waiting) return;
