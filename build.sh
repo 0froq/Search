@@ -16,6 +16,9 @@
 # links to them once and the updater reads one address forever. ./publish.sh
 # copies them into the site.
 #
+# "dmg" lays the disk image's window out with dmgbuild, installed into .build
+# on first use (Python 3 and a network, once).
+#
 # What "ship" needs, once:
 #   - a Developer ID Application certificate in the login keychain
 #     (SEARCH_SIGN_IDENTITY names it; otherwise the first one found is used)
@@ -140,15 +143,37 @@ fi
 echo "built: $APP ($VERSION, build $BUILD)"
 [ "$STEP" = "app" ] && exit 0
 
-# The disk image: the app and a shortcut to Applications, nothing else.
+# The disk image: the app beside a shortcut to Applications, on a white
+# window with an arrow between them — drawn by Installer/background.swift and
+# laid out by Installer/dmg.py through dmgbuild, which writes the Finder's
+# layout file itself, so no Finder is scripted and no window opens mid-build.
+# dmgbuild is installed into .build the first time, and needs Python 3 and a
+# network then; without it the image is the plain one it always was.
 DMG="build/$NAME.dmg"
-STAGE="build/dmg"
-rm -rf "$STAGE" "$DMG"
-mkdir -p "$STAGE"
-cp -R "$APP" "$STAGE/"
-ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
-rm -rf "$STAGE"
+ART="build/installer"
+rm -rf "$ART" "$DMG"
+DMGBUILD=".build/dmgbuild/bin/dmgbuild"
+if [ ! -x "$DMGBUILD" ]; then
+  { python3 -m venv .build/dmgbuild && .build/dmgbuild/bin/pip install --quiet "dmgbuild==1.6.7"; } >/dev/null 2>&1 || true
+fi
+if [ -x "$DMGBUILD" ] \
+  && swift Installer/background.swift "$ART" >/dev/null \
+  && tiffutil -cathidpicheck "$ART/background.png" "$ART/background@2x.png" -out "$ART/background.tiff" >/dev/null 2>&1
+then
+  "$DMGBUILD" -s Installer/dmg.py \
+    -D app="$APP" -D background="$ART/background.tiff" -D icon="$APP/Contents/Resources/AppIcon.icns" \
+    "$NAME" "$DMG" >/dev/null
+else
+  echo "note: no dmgbuild — a plain disk image, without its window laid out" >&2
+  STAGE="build/dmg"
+  rm -rf "$STAGE"
+  mkdir -p "$STAGE"
+  cp -R "$APP" "$STAGE/"
+  ln -s /Applications "$STAGE/Applications"
+  hdiutil create -volname "$NAME" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
+  rm -rf "$STAGE"
+fi
+rm -rf "$ART"
 [ -n "$IDENTITY" ] && codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 echo "packed: $DMG"
 
