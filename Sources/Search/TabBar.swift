@@ -29,6 +29,10 @@ struct TabBar: View {
                 // The empty half of the strip is what you grab to move the
                 // window; the tabs keep the run they sit on.
                 DragStrip(reserved: taken(in: geo.size.width), trailing: Metrics.helm + 26 + 24)
+                // And the corner the lights sit in, which is title bar too —
+                // the one stretch left to take hold of when tabs fill the row.
+                DragStrip()
+                    .frame(width: Metrics.lights)
 
                 HStack(spacing: Metrics.tabGap) {
                     ForEach(Array(browser.tabs.enumerated()), id: \.element.id) { index, tab in

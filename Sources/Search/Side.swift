@@ -36,6 +36,19 @@ struct SideBar: View {
         ZStack(alignment: .top) {
             DragStrip(reserved: 0, below: rowsEnd)
 
+            // The band the lights sit in is this mode's title bar: the window
+            // is dragged by it and a double-click fills the screen with it,
+            // everywhere but over the three doors, which take their own
+            // clicks. The lights are the title bar's own and answer first.
+            HStack(spacing: 0) {
+                DragStrip()
+                    .frame(width: 10 + Metrics.sideLights)
+                Color.clear
+                    .frame(width: Metrics.helm)
+                    .allowsHitTesting(false)
+                DragStrip()
+            }
+            .frame(height: Metrics.strip)
 
             VStack(alignment: .leading, spacing: 0) {
                 // The traffic lights' corner, with back, forward and reload
@@ -47,7 +60,7 @@ struct SideBar: View {
                     Helm(browser: browser)
                     Spacer(minLength: 0)
                 }
-                .frame(height: 42)
+                .frame(height: Metrics.strip)
 
                 if browser.pinnedCount > 0 {
                     pinned
@@ -121,7 +134,7 @@ struct SideBar: View {
         let pinBlock = pinRows == 0 ? 0
             : CGFloat(pinRows) * pinHeight + CGFloat(pinRows - 1) * SideBar.pinGap + 10
         let loose = CGFloat(browser.tabs.count - pins) * (SideBar.row + SideBar.gap)
-        return 42 + pinBlock + loose + SideBar.row + 8
+        return Metrics.strip + pinBlock + loose + SideBar.row + 8
     }
 
     // MARK: - the pinned squares

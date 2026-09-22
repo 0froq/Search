@@ -372,9 +372,7 @@ struct ContentView: View {
             .overlay { panels }
             .animation(Motion.settle, value: browser.fieldShowing)
             .background(WindowSetup { window = $0; dress($0) })
-            .onChange(of: browser.prefs.sidebar) { _, sidebar in
-                guard let window else { return }
-                fit(window, sidebar: sidebar)
+            .onChange(of: browser.prefs.sidebar) { _, _ in
                 DispatchQueue.main.async { measureLights() }
             }
             // Stepping away to another app: macOS draws its own resting
@@ -559,13 +557,14 @@ struct ContentView: View {
         return browser.prefs.sidebar ? 0 : Metrics.strip
     }
 
-    /// The title bar is grown to the height of the strip only when there is a
-    /// strip. Without one, the lights come back up to where macOS puts them.
-    private func fit(_ window: NSWindow, sidebar: Bool) {
-        guard !sidebar else {
-            window.toolbar = nil
-            return
-        }
+    /// An empty toolbar in both modes, for where it puts the lights: set in
+    /// from the corner and centred in a title bar as tall as the strip, the
+    /// way every Mac app with a toolbar has them. The sidebar used to go
+    /// without, and its lights rode up into the corner — eight points further
+    /// left and fourteen higher than the window beside it. The column's first
+    /// row is the strip's height, so its three doors sit on the lights' line.
+    private func fit(_ window: NSWindow) {
+        guard window.toolbar == nil else { return }
         let toolbar = NSToolbar(identifier: "strip")
         toolbar.showsBaselineSeparator = false
         window.toolbar = toolbar
@@ -608,7 +607,7 @@ struct ContentView: View {
         // title bar as tall as the strip, and the traffic lights centre
         // themselves in it. That is the only way to give the tabs room above
         // without leaving the three buttons stranded at the top.
-        fit(window, sidebar: browser.prefs.sidebar)
+        fit(window)
         DispatchQueue.main.async { measureLights() }
 
         // The traffic lights are drawn — measured, they paint themselves — but

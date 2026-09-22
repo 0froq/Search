@@ -285,9 +285,19 @@ struct DragStrip: NSViewRepresentable {
             window.setFrameOrigin(NSPoint(x: origin.x + dx, y: origin.y + dy))
         }
 
+        /// A double-click does what a title bar's does. It answered every
+        /// click before — so a double-click filled the screen on the first
+        /// click and put the window back on the second, and looked like
+        /// nothing at all.
         override func mouseUp(with event: NSEvent) {
-            guard let window, !moved else { return }
-            window.zoom(nil)
+            guard let window, !moved, event.clickCount == 2 else { return }
+            // System Settings › Desktop & Dock: what double-clicking a title
+            // bar should do. Unset means the default, which fills the screen.
+            switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+            case "Minimize": window.miniaturize(nil)
+            case "None": break
+            default: window.zoom(nil)
+            }
         }
     }
 }

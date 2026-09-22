@@ -1702,10 +1702,17 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
 
     private func fail(_ webView: WKWebView, _ error: Error) {
         tab(for: webView)?.uncover()
-        let code = (error as NSError).code
+        let nsError = error as NSError
+        let code = nsError.code
         // Cancelled is not a failure: it's what a redirect, a stopped load, or
         // a second Return in quick succession looks like from here.
         guard code != NSURLErrorCancelled else { return }
+        // Nor is a page that turned into a download: WebKit ends that
+        // navigation with "frame load interrupted" (102) while the file goes
+        // on arriving. Answered as a failure, it covered the page with "The
+        // page didn't load" over a download that had worked — clicked again,
+        // it downloaded again.
+        guard !(nsError.domain == "WebKitErrorDomain" && code == 102) else { return }
         tab(for: webView)?.failure = message(for: code)
     }
 
