@@ -73,6 +73,12 @@ final class Preferences: ObservableObject {
     @Published var shielded: Bool {
         didSet { store.set(shielded, forKey: "shield") }
     }
+    /// A private tab gets extensions too, not just every other page. Off
+    /// unless asked for - a private tab keeps nothing by default, extensions
+    /// included, and some watch what a page does.
+    @Published var extensionsInPrivate: Bool {
+        didSet { store.set(extensionsInPrivate, forKey: "extensions.private") }
+    }
     /// Whether sites may ask for a passkey here. Off sends them to the
     /// password instead — the only thing that works in a build without
     /// Apple's browser entitlement.
@@ -159,6 +165,7 @@ final class Preferences: ObservableObject {
         sleepsTabs = store.object(forKey: "tabs.sleep") as? Bool ?? true
         showsReading = store.object(forKey: "tabs.reading") as? Bool ?? true
         shielded = store.object(forKey: "shield") as? Bool ?? true
+        extensionsInPrivate = store.bool(forKey: "extensions.private")
         // Offered by default only in a build that can actually do them —
         // one with Apple's browser entitlement and its profile embedded. A
         // choice made while they couldn't work is not a choice about them:
