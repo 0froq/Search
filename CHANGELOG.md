@@ -22,6 +22,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- The stand-in traffic lights drawn while Search is in the background are no longer redrawn each time the window changes screen or size, only when they move.
 - An empty tab no longer works the processor while it waits: the slow breath under the address field was redrawn by the app every frame, about a sixth of a core with nothing happening. The same breath now runs in macOS's own animation layer, at no cost to Search.
 - With extensions installed, the window no longer waits for them: they load once it is up. The first launch after an update, when Search fits its Chrome compatibility layer to each extension again, does that away from the main thread — with Grammarly, the window had stood still for half a second. Thanks [@andupoto](https://x.com/andupoto) for the report
 - Search opens faster when you have many bookmarks: the Bookmarks menu used to be built in full, every folder included, before the window could appear — about a quarter of a second for 1,500 bookmarks, at every launch. Its bookmarks are now put in as the menu opens, a folder's as that folder opens. Thanks [@andupoto](https://x.com/andupoto) for the report
