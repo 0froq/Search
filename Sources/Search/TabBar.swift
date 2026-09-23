@@ -665,6 +665,10 @@ struct TabMenu: View {
         Button("Close Tab", action: close)
         Button("Close Other Tabs") { browser.closeOthers(but: tab) }
             .disabled(browser.tabs.count < 2)
+        // ⌘⇧T, and the History menu's Recently Closed, where few think to
+        // look for it: here too, where tabs are closed.
+        Button("Reopen Closed Tab") { browser.reopen() }
+            .disabled(browser.ghosts.isEmpty)
     }
 }
 
