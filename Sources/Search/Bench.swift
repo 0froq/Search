@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import WebKit
 
 // A way for a script on this Mac to drive the browser you already have open,
@@ -605,6 +606,70 @@ final class Bench {
             default: break
             }
 
+        case "strip":
+            // The row of tabs across the top, drawn off screen at a width,
+            // with what the browser has now — for what the row looks like
+            // without a window on anybody's screen.
+            guard let path = request["path"] as? String else { answer(["error": "strip needs a path"]); return }
+            let width = request["width"] as? Double ?? 1100
+            let host = NSHostingView(rootView: TabBar(browser: browser).frame(width: width, height: Metrics.strip).background(Palette.ground))
+            host.frame = NSRect(x: 0, y: 0, width: width, height: Double(Metrics.strip))
+            let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            window.appearance = NSApp.effectiveAppearance
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                guard let picture = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { answer(["error": "nothing drawn"]); return }
+                host.cacheDisplay(in: host.bounds, to: picture)
+                do {
+                    try picture.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                    answer(["saved": path])
+                } catch { answer(["error": error.localizedDescription]) }
+                window.contentView = nil
+            }
+
+        case "space":
+            // The spaces, and switching between them, for a test of what a
+            // space keeps apart. Test runs only: it moves your tabs about.
+            guard Store.testing else { answer(["error": "space only works on a --test run"]); return }
+            switch request["action"] as? String ?? "" {
+            case "new": browser.addSpace(named: request["name"] as? String ?? "Test")
+            case "go": browser.switchSpace(index: (request["index"] as? Int ?? 1) - 1)
+            case "delete": browser.deleteSpace(browser.spaceID)
+            default: break
+            }
+            let out: [String: Any] = [
+                "on": browser.prefs.usesSpaces,
+                "current": browser.space.name,
+                "spaces": browser.spaces.map { ["name": $0.name, "id": $0.id.uuidString, "downloads": $0.downloads ?? ""] },
+                "parked": browser.parked.map { [$0.key.uuidString: $0.value.tabs.count] },
+                "tabs": browser.tabs.count,
+                "pages": Web.pages.allObjects.map { $0.configuration.websiteDataStore.identifier?.uuidString ?? "default" },
+            ]
+            // And the stores WebKit keeps by identifier, a moment later —
+            // what a deleted space should have taken with it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                WKWebsiteDataStore.fetchAllDataStoreIdentifiers { ids in
+                    MainActor.assumeIsolated {
+                        // What is still in the stores of deleted spaces — none, if deleting emptied them.
+                        let erasing = (Store.settings.stringArray(forKey: "spaces.erasing") ?? []).compactMap(UUID.init)
+                        guard request["records"] as? Bool == true, !erasing.isEmpty else {
+                            answer(out.merging(["stores": ids.map(\.uuidString)]) { a, _ in a })
+                            return
+                        }
+                        Task { @MainActor in
+                            var left: [String: [String]] = [:]
+                            for id in erasing where ids.contains(id) {
+                                let records = await WKWebsiteDataStore(forIdentifier: id)
+                                    .dataRecords(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes())
+                                left[id.uuidString] = records.map { "\($0.displayName): \($0.dataTypes.sorted().joined(separator: ","))" }
+                            }
+                            answer(out.merging(["stores": ids.map(\.uuidString), "erasingRecords": left]) { a, _ in a })
+                        }
+                    }
+                }
+            }
+
         case "ui":
             // Open or close the app's own panels, to reproduce what a person
             // did without a person.
@@ -618,6 +683,7 @@ final class Bench {
             if let look = (request["look"] as? String).flatMap(Look.init) { browser.prefs.look = look }
             if let on = request["sidebar"] as? Bool { browser.prefs.sidebar = on }
             if let on = request["inspector"] as? Bool { browser.prefs.inspects = on }
+            if let on = request["spaces"] as? Bool { browser.prefs.usesSpaces = on }
             if let on = request["folded"] as? Bool { browser.folded = on }
             if let on = request["peek"] as? Bool { browser.peeking = on }
             if #available(macOS 15.4, *), let on = request["extensions"] as? Bool { Extensions.shared.menuOpen = on }
@@ -632,7 +698,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "space", "strip", "ui",
             ]])
         }
     }

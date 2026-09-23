@@ -721,6 +721,15 @@ struct ContentView: View {
             return false
         }
 
+        // ⌃1–⌃9 go to that space, when there are spaces — by the key, as
+        // ⌘1–⌘9 are below, so the top row works on every layout.
+        if browser.prefs.usesSpaces, flags.contains(.control),
+           flags.isDisjoint(with: [.command, .option, .shift]),
+           let number = ContentView.digits[event.keyCode], number > 0 {
+            browser.switchSpace(index: number - 1)
+            return true
+        }
+
         // A shortcut an extension registered — ⌥⇧D, ⌃⇧Y — before ours, since
         // none of ours use those.
         if #available(macOS 15.4, *), !flags.intersection([.command, .option, .control]).isEmpty,
