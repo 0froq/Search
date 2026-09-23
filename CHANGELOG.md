@@ -26,6 +26,7 @@ in [ROADMAP.md](ROADMAP.md).
 - ⌘← and ⌘→ move through text while editing; adding Shift selects text instead of navigating away from the page.
 - Extensions that open something inside a page no longer make it reload: signing in to Google with iCloud Passwords installed reloaded the page over and over, and every Vimium key that opens its bar or its link hints reloaded the page. Such a panel now gets the same answers from the browser as in Chrome. ([#2](https://github.com/driceroland/Search/issues/2))
 - Dragging a tab to put it elsewhere in the row across the top moves the tab, not the whole window, and a tab being dragged stays under the pointer as it passes the others, in the column too.
+- A fresh install follows the Mac's appearance: on a Mac set to dark the browser and its pages start out dark, instead of always starting light.
 - The address field on a new tab holds still while its suggestions appear under it, instead of jumping up. Thanks [@fschrhunt](https://github.com/fschrhunt) ([#16](https://github.com/driceroland/Search/pull/16))
 - 1Password's Sign in button works: an extension's page can send its tab to a website again, where it used to do nothing.
 - A video in the floating window costs no more to play than in its tab. The window's shadow made WindowServer composite every frame; it has none now. ([#33](https://github.com/driceroland/Search/issues/33))
