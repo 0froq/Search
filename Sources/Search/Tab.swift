@@ -84,6 +84,12 @@ final class Tab: ObservableObject, Identifiable {
     /// the reason there is.
     private(set) var built: PageView?
     private let configuration: WKWebViewConfiguration
+
+    /// Whether its page was made with the extension controller in it — every
+    /// ordinary tab, and a private one only when extensions were allowed
+    /// there as it was made (a controller can't be added to a page later).
+    @available(macOS 15.4, *)
+    var carriesExtensions: Bool { configuration.webExtensionController != nil }
     /// Whoever handles navigation and windows for this page; applied when
     /// the page is built, whenever that is.
     weak var delegate: (WKNavigationDelegate & WKUIDelegate)? {
