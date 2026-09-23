@@ -53,6 +53,18 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/$NAME"
 
+# Symbols stay out of the app. The linker leaves every function's name and a
+# map back to the source in the binary — 15,000 entries, more than half of
+# what the app weighed (6.5 MB of binary, 2.7 without them), and nothing the
+# app reads while it runs. They are kept beside the build instead, as a dSYM
+# that turns the addresses in a crash report back into names (Console, or
+# atos -o build/Search.app.dSYM/Contents/Resources/DWARF/Search).
+if [ "$CONFIG" = "release" ]; then
+  rm -rf "$APP.dSYM"
+  dsymutil "$BINARY" -o "$APP.dSYM" 2>/dev/null || echo "no dSYM this time" >&2
+  strip -x "$APP/Contents/MacOS/$NAME"
+fi
+
 # The icon, drawn fresh each time — it is thirty lines of Swift, not an asset
 # to keep in step with anything.
 ICONSET="build/AppIcon.iconset"
