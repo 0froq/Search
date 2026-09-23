@@ -11,6 +11,8 @@ in [ROADMAP.md](ROADMAP.md).
 
 ## Unreleased
 
+## 1.0.1 — 23 September 2026
+
 ### Added
 
 - A middle-click on a tab closes it, in the row across the top and in the column. A pinned tab is put down, as with ⌘W. Thanks [@lusqua](https://github.com/lusqua) ([#27](https://github.com/driceroland/Search/pull/27))
