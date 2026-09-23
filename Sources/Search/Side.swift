@@ -178,12 +178,11 @@ struct SideBar: View {
         let cols = SideBar.pinColumns(tabs.count)
         let width = pinWidth
         let height = pinHeight
-        let columns = Array(repeating: GridItem(.fixed(width), spacing: SideBar.pinGap), count: cols)
         // Measured in the grid's own space, not the square's: a square that
         // has just been moved to a new cell would otherwise report the drag
         // from where it now is, the target would jump back, and the square
         // would shuttle between two cells for as long as the finger stayed.
-        return VStack(spacing: 0) { LazyVGrid(columns: columns, alignment: .leading, spacing: SideBar.pinGap) {
+        return VStack(spacing: 0) { PinGrid(columns: cols, width: width, height: height, spacing: SideBar.pinGap) {
             ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                 let held = pinDragging == tab.id
                 PinSquare(
@@ -343,6 +342,38 @@ struct SideBar: View {
         .padding(.bottom, 10)
     }
 
+}
+
+/// The pinned squares' grid, every cell laid out at once. A lazy grid makes
+/// its cells only once the column is on screen, where the column's slide
+/// can't take them along: folded with ⌘S and brought back, the squares stood
+/// in place while the column came in beneath them. A dozen squares need no
+/// laziness.
+private struct PinGrid: Layout {
+    let columns: Int
+    let width: CGFloat
+    let height: CGFloat
+    let spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = (subviews.count + columns - 1) / columns
+        return CGSize(
+            width: CGFloat(columns) * width + CGFloat(max(0, columns - 1)) * spacing,
+            height: CGFloat(rows) * height + CGFloat(max(0, rows - 1)) * spacing
+        )
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for (index, subview) in subviews.enumerated() {
+            subview.place(
+                at: CGPoint(
+                    x: bounds.minX + CGFloat(index % columns) * (width + spacing),
+                    y: bounds.minY + CGFloat(index / columns) * (height + spacing)
+                ),
+                proposal: ProposedViewSize(width: width, height: height)
+            )
+        }
+    }
 }
 
 /// A pinned tab as a cell in the block at the top of the column — as wide as
