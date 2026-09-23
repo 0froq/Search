@@ -383,7 +383,7 @@ final class Bench {
         let skip = Store.testing && (request["yes"] as? Bool ?? false)
         switch verb {
         case "extensions":
-            answer(["extensions": extensions.installed.map { item -> [String: Any] in
+            answer(["busy": extensions.busy ?? "", "extensions": extensions.installed.map { item -> [String: Any] in
                 let context = extensions.contexts[item.id]
                 let action = context?.action(for: extensions.activeAdapter)
                 return [

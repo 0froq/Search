@@ -97,7 +97,7 @@ final class Extensions: NSObject, ObservableObject {
         WKWebExtension.MatchPattern.registerCustomURLScheme(Extensions.scheme)
         // A test run keeps its extensions' storage apart, as it does its
         // cookies and passwords.
-        let configuration: WKWebExtensionController.Configuration = Store.testing
+        let configuration: WKWebExtensionController.Configuration = Store.testing && !Store.ownContainer
             ? .init(identifier: UUID(uuidString: "5E4C0000-0000-4000-8000-000000000002")!)
             : .default()
         configuration.defaultWebsiteDataStore = Store.websites
@@ -140,7 +140,14 @@ final class Extensions: NSObject, ObservableObject {
             .sink { [weak self] pair in self?.activated(from: pair.0, to: pair.1) }
             .store(in: &bag)
         Task {
-            for item in installed where item.enabled { await load(item) }
+            // One after another, a moment apart: started all at once, WebKit
+            // fails some of their workers and never tries them again.
+            for item in installed where item.enabled {
+                await load(item)
+                if contexts[item.id]?.webExtension.hasBackgroundContent == true {
+                    try? await Task.sleep(for: .milliseconds(400))
+                }
+            }
             checkForUpdates()
         }
     }

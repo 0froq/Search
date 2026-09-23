@@ -26,8 +26,17 @@ enum Store {
     /// between probes the way the real one does. Wiping the test store is
     /// then as safe as wiping its folder.
     static var websites: WKWebsiteDataStore {
-        guard testing else { return .default() }
+        guard testing, !ownContainer else { return .default() }
         return WKWebsiteDataStore(forIdentifier: probeStore)
+    }
+
+    /// A test copy of the app under a bundle id of its own has a WebKit
+    /// container of its own too, so it can use WebKit's default store and
+    /// extension configuration — the ones the real browser uses, which
+    /// differ from stores made by identifier in how long extension workers
+    /// are let live.
+    static var ownContainer: Bool {
+        (Bundle.main.bundleIdentifier ?? "") != "com.officecommun.search"
     }
 
     private static let probeStore = UUID(uuidString: "5E4C0000-0000-4000-8000-000000000001")!

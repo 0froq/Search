@@ -69,16 +69,23 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
         shown = false
         if let anchor, anchor.window != nil {
             popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
-        } else if let content = NSApp.mainWindow?.contentView ?? NSApp.windows.first(where: { $0.isVisible })?.contentView {
+        } else if let content = (NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain && $0.frame.minX > -10_000 }))?.contentView {
             let spot = NSRect(x: content.bounds.maxX - 60, y: content.bounds.maxY - 40, width: 1, height: 1)
             popover.show(relativeTo: spot, of: content, preferredEdge: .minY)
         }
         // Sized once loaded — or after a moment regardless, for a page that
         // never finishes loading.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self, weak popover] in
+        // Measured when the document is built (see below) or has loaded;
+        // a page slow to do either is measured anyway after a moment, and
+        // shown regardless a little later.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self, weak popover] in
+            guard let self, let popover, popover === self.popover else { return }
+            self.firstMeasure()
+            self.follow()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak popover] in
             guard let self, let popover, popover === self.popover else { return }
             self.reveal()
-            self.follow()
         }
     }
 
@@ -90,7 +97,7 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
     private func reveal() {
         guard !shown, let web, let stage = popover?.contentViewController?.view else { return }
         shown = true
-        web.frame = stage.bounds
+        web.frame = NSRect(origin: .zero, size: popover?.contentSize ?? stage.bounds.size)
         web.autoresizingMask = [.width, .height]
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.12
@@ -102,7 +109,7 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
     /// list filled in by a reply from the worker — for a few seconds.
     private func follow() {
         guard measuring == nil else { return }
-        if !shown { reveal() }
+        if !shown { firstMeasure() }
         ticks = 0
         var ticks = 0
         measuring = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
@@ -181,10 +188,18 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
     /// extension pages share can't be given a script of our own.
     @objc(_webView:navigationDidFinishDocumentLoad:)
     func webView(_ webView: WKWebView, navigationDidFinishDocumentLoad navigation: WKNavigation?) {
-        guard webView === web, !shown else { return }
-        webView.evaluateJavaScript("(\(ExtensionPopup.preferred))()") { [weak self] value, _ in
+        guard webView === web else { return }
+        firstMeasure()
+    }
+
+    /// Measured while still the 25-point square and unseen, then shown at
+    /// the size found.
+    private func firstMeasure() {
+        guard let web, !shown else { return }
+        web.evaluateJavaScript("(\(ExtensionPopup.preferred))()") { [weak self] value, _ in
             MainActor.assumeIsolated {
-                guard let self, webView === self.web, let pair = value as? [Double], pair.count == 2 else { return }
+                guard let self, web === self.web, !self.shown else { return }
+                guard let pair = value as? [Double], pair.count == 2 else { return }
                 self.apply(NSSize(width: pair[0], height: pair[1]))
             }
         }
@@ -193,7 +208,12 @@ final class ExtensionPopup: NSObject, WKUIDelegate, WKNavigationDelegate, NSPopo
     private func apply(_ size: NSSize) {
         guard let popover else { return }
         if abs(size.width - popover.contentSize.width) > 1 || abs(size.height - popover.contentSize.height) > 1 {
+            // The popover takes its size from its view controller, and goes
+            // back to it: both are told.
+            popover.contentViewController?.preferredContentSize = size
             popover.contentSize = size
+            popover.contentViewController?.view.setFrameSize(size)
+            if shown { web?.frame = NSRect(origin: .zero, size: size) }
         }
         if let id = extensionID { ExtensionPopup.lastSize[id] = size }
         reveal()

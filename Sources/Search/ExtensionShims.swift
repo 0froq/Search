@@ -218,10 +218,17 @@ enum ExtensionShims {
       };
       // Held from the start, before the extension's own code runs — its
       // polyfills set things on these objects too.
-      for (const space of Object.keys(chrome)) {
+      const spaces = new Set(Object.keys(chrome));
+      for (let o = Object.getPrototypeOf(chrome); o && o !== Object.prototype; o = Object.getPrototypeOf(o)) Object.getOwnPropertyNames(o).forEach((k) => spaces.add(k));
+      for (const space of spaces) {
         let ns; try { ns = chrome[space]; } catch (e) { continue; }
         if (!ns || typeof ns !== "object") continue;
         kept.add(ns);
+        // And the same object every time it is asked for: WebKit can hand
+        // out a fresh one, without what was set on the last.
+        if (!Object.prototype.hasOwnProperty.call(chrome, space) || Object.getOwnPropertyDescriptor(chrome, space).get) {
+          try { Object.defineProperty(chrome, space, { value: ns, configurable: true, writable: true, enumerable: true }); } catch (e) {}
+        }
         for (let o = ns; o && o !== Object.prototype; o = Object.getPrototypeOf(o)) {
           for (const key of Object.getOwnPropertyNames(o)) {
             if (!/^on[A-Z]/.test(key)) continue;
@@ -660,27 +667,64 @@ enum ExtensionShims {
       // tab in a popup, and lists it among the popup views; extensions lay
       // themselves out by that (Bitwarden, Proton Pass: or else they fill
       // the window as if in a tab).
-      if (typeof document !== "undefined" && chrome.tabs && typeof chrome.tabs.getCurrent === "function") {
-        const getCurrent = chrome.tabs.getCurrent.bind(chrome.tabs);
-        let popup = false;
-        const current = () => Promise.resolve(getCurrent()).then((t) => {
-          if (t && !(t.index >= 0 && t.index < 1e6)) { popup = true; return undefined; }
-          return t;
-        });
-        current().catch(() => {});
-        put(chrome.tabs, "getCurrent", (callback) => {
-          const p = current();
-          if (typeof callback !== "function") return p;
-          p.then((t) => callback(t), (e) => withLastError(e, callback));
-        });
-        if (chrome.extension && typeof chrome.extension.getViews === "function") {
-          const getViews = chrome.extension.getViews.bind(chrome.extension);
-          put(chrome.extension, "getViews", (properties = {}) => {
-            let views = [...(getViews(properties) || [])];
-            if (popup && properties.type === "tab") views = views.filter((v) => v !== root);
-            if (popup && (!properties.type || properties.type === "popup") && !views.includes(root)) views.push(root);
-            return views;
+      if (typeof document !== "undefined") {
+        // Known at once for the manifest's popup page — pages lay themselves
+        // out before any answer can come back — and settled by what WebKit
+        // says of the tab.
+        let popup = (() => {
+          try {
+            const m = runtime.getManifest(), a = m.action || m.browser_action || {};
+            return !!a.default_popup && new URL(a.default_popup, location.origin + "/").pathname === location.pathname;
+          } catch (e) { return false; }
+        })();
+        if (chrome.tabs && typeof chrome.tabs.getCurrent === "function") {
+          const getCurrent = chrome.tabs.getCurrent.bind(chrome.tabs);
+          const current = () => Promise.resolve(getCurrent()).then((t) => {
+            if (t && !(t.index >= 0 && t.index < 1e6)) { popup = true; return undefined; }
+            if (t) popup = false;
+            return t;
           });
+          current().catch(() => {});
+          put(chrome.tabs, "getCurrent", (callback) => {
+            const p = current();
+            if (typeof callback !== "function") return p;
+            p.then((t) => callback(t), (e) => withLastError(e, callback));
+          });
+        }
+        if (chrome.extension && typeof chrome.extension.getViews === "function") {
+          const extension = chrome.extension;
+          const getViews = extension.getViews.bind(extension);
+          const views = (properties = {}) => {
+            let list = [...(getViews(properties) || [])];
+            if (popup && properties.type === "tab") list = list.filter((v) => v !== root);
+            if (popup && (!properties.type || properties.type === "popup") && !list.includes(root)) list.push(root);
+            return list;
+          };
+          put(extension, "getViews", views);
+          // WebKit's getViews is read-only, and so is chrome.extension: both
+          // ignore any redefinition without a word. The popup page's code
+          // is then handed a `chrome` of its own, built on WebKit's, whose
+          // extension namespace answers getViews and passes everything else
+          // on (Malwarebytes lays itself out as a tab otherwise).
+          if (popup && extension.getViews !== views) {
+            const bound = new Map();
+            const ownExtension = Object.create(extension);
+            for (const key of Object.getOwnPropertyNames(extension)) {
+              if (key === "getViews") continue;
+              Object.defineProperty(ownExtension, key, { configurable: true, enumerable: true, get: () => {
+                const v = extension[key];
+                if (typeof v !== "function") return v;
+                if (!bound.has(key)) bound.set(key, v.bind(extension));
+                return bound.get(key);
+              } });
+            }
+            Object.defineProperty(ownExtension, "getViews", { value: views, configurable: true, writable: true, enumerable: true });
+            const ownChrome = Object.create(chrome);
+            Object.defineProperty(ownChrome, "extension", { value: ownExtension, configurable: true, writable: true, enumerable: true });
+            for (const key of ["chrome", "browser"]) {
+              try { if (root[key] === chrome) root[key] = ownChrome; } catch (e) {}
+            }
+          }
         }
       }
       fill("extension", {
