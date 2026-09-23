@@ -81,6 +81,14 @@ final class Browser: NSObject, ObservableObject {
         withAnimation(Motion.glide) { prefs.sidebar.toggle() }
     }
 
+    func searchURL(for text: String) -> URL? {
+        Engine.url(for: text, template: prefs.engine.template(custom: prefs.customEngine))
+    }
+
+    func destination(for typed: String) -> URL? {
+        Address.url(from: typed) ?? searchURL(for: typed)
+    }
+
     /// ⌘S: the column folded away, and slid out over the page for a look
     /// while it is (see Fold.swift).
     @Published var folded = false
@@ -585,7 +593,7 @@ final class Browser: NSObject, ObservableObject {
             writeSession(now: true)
             return
         }
-        guard let url = Google.destination(for: tabDraft) else {
+        guard let url = destination(for: tabDraft) else {
             // Stay put and say so, rather than quietly throwing the edit away.
             refusals += 1
             return
@@ -612,7 +620,7 @@ final class Browser: NSObject, ObservableObject {
         }
         let draft = tabDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         if draft.isEmpty || tab.address.map({ Address.pretty($0) == draft }) == true
-            || Google.destination(for: draft) == nil {
+            || destination(for: draft) == nil {
             cancelTabEdit()
             return
         }
@@ -1275,7 +1283,7 @@ final class Browser: NSObject, ObservableObject {
     /// ⌘⇧V. What is in the clipboard, if it is a place — or a search.
     func pasteAndGo() {
         guard let text = NSPasteboard.general.string(forType: .string),
-              let url = Google.destination(for: text.trimmingCharacters(in: .whitespacesAndNewlines))
+              let url = destination(for: text.trimmingCharacters(in: .whitespacesAndNewlines))
         else {
             refusals += 1
             return
@@ -1521,9 +1529,9 @@ final class Browser: NSObject, ObservableObject {
         // Last in the list, and only when what was typed cannot be a place.
         if !typed.isEmpty,
            Address.url(from: typed) == nil,
-           let asked = Google.url(for: typed) {
+           let asked = searchURL(for: typed) {
             list.append(
-                Suggestion(key: typed, title: Google.name, url: asked, kind: .search)
+                Suggestion(key: typed, title: prefs.engine.name(custom: prefs.customEngine), url: asked, kind: .search)
             )
         }
         offers = list
@@ -1651,7 +1659,7 @@ final class Browser: NSObject, ObservableObject {
         } else if ending != nil {
             target = Address.url(from: completed)
         } else {
-            target = Google.destination(for: typed)
+            target = destination(for: typed)
         }
 
         guard let url = target else {
