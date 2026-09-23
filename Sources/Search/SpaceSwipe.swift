@@ -2,8 +2,8 @@ import SwiftUI
 
 // Spaces in the column: two fingers sideways go from one to the next, the
 // rows following them, as in Arc. Past the last space the column offers to
-// make a new one, in place. The dots at its foot are the spaces in order —
-// a click goes to one, dragging one puts it elsewhere.
+// make a new one, in place. The space's icon at the column's foot turns
+// over as it goes (see SpaceDot).
 
 /// The sideways swipe over the column. It reads the trackpad's own scroll
 /// events before anything else sees them, and takes only a gesture that
@@ -107,23 +107,28 @@ final class SpaceSwipe {
         return blocked ? travel / 4 : travel
     }
 
-    /// Out the way the fingers went, and the next one in from the other side.
-    /// One past the last space is the card for a new one.
+    /// The pages carry on the way the fingers went until the next one is
+    /// where this one was; then it becomes the one on screen, in the same
+    /// frame and without anything moving — it was already there. One past
+    /// the last space is the card for a new one.
     func slide(_ browser: Browser, to target: Int, from here: Int) {
         let width = browser.prefs.sideWidth
         let away: CGFloat = target > here ? -1 : 1
-        withAnimation(.easeIn(duration: 0.12)) { browser.spaceSwipe = away * width }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            if target == browser.spaces.count {
-                browser.makingSpace = true
-            } else {
-                browser.makingSpace = false
-                browser.switchSpace(to: browser.spaces[target].id)
-            }
+        browser.spaceStep = target > here ? 1 : -1
+        withAnimation(.easeOut(duration: 0.22), completionCriteria: .removed) {
+            browser.spaceSwipe = away * width
+        } completion: {
             var still = Transaction()
             still.disablesAnimations = true
-            withTransaction(still) { browser.spaceSwipe = -away * width }
-            withAnimation(Motion.glide) { browser.spaceSwipe = 0 }
+            withTransaction(still) {
+                if target == browser.spaces.count {
+                    browser.makingSpace = true
+                } else {
+                    browser.makingSpace = false
+                    browser.switchSpace(to: browser.spaces[target].id)
+                }
+                browser.spaceSwipe = 0
+            }
         }
     }
 }
@@ -131,18 +136,21 @@ final class SpaceSwipe {
 // MARK: - the card
 
 /// A new space, made where the next one would have been: its name, its
-/// colour, and on its way. Escape, Cancel or two fingers back leave it.
+/// icon, and on its way. Escape, Cancel or two fingers back leave it.
 struct NewSpaceCard: View {
     @ObservedObject var browser: Browser
     @State private var name = ""
-    @State private var colour = 0
+    @State private var icon = "briefcase"
     @FocusState private var typing: Bool
 
     var body: some View {
         VStack(spacing: 12) {
-            Circle()
-                .fill(Spaces.colours[colour % Spaces.colours.count])
-                .frame(width: 22, height: 22)
+            Image(systemName: icon)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(Palette.ink)
+                .frame(width: 30, height: 26)
+                .id(icon)
+                .transition(.opacity)
             VStack(spacing: 4) {
                 Text("New space")
                     .font(.system(size: 13, weight: .semibold))
@@ -160,19 +168,20 @@ struct NewSpaceCard: View {
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Palette.wash))
                 .focused($typing)
                 .onSubmit(create)
-            HStack(spacing: 8) {
-                ForEach(Spaces.colours.indices, id: \.self) { i in
-                    Circle()
-                        .fill(Spaces.colours[i])
-                        .frame(width: 14, height: 14)
-                        .overlay(
-                            Circle().strokeBorder(Palette.ink.opacity(i == colour ? 0.55 : 0), lineWidth: 1.5)
-                                .frame(width: 20, height: 20)
+            // The icons, a few to a row, the chosen one on a grey of its own.
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 3), count: 6), spacing: 3) {
+                ForEach(Array(zip(Spaces.icons, Spaces.iconNames)), id: \.0) { symbol, name in
+                    Image(systemName: symbol)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(symbol == icon ? Palette.ink : Palette.muted)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(symbol == icon ? Palette.wash : .clear)
                         )
-                        .frame(width: 20, height: 20)
-                        .contentShape(Circle())
-                        .onTapGesture { colour = i }
-                        .help(Spaces.colourNames[i])
+                        .contentShape(Rectangle())
+                        .onTapGesture { icon = symbol }
+                        .help(name)
                 }
             }
             HStack(spacing: 8) {
@@ -183,7 +192,7 @@ struct NewSpaceCard: View {
         .padding(16)
         .frame(maxWidth: .infinity)
         .onAppear {
-            colour = browser.freeColour
+            icon = browser.freeIcon
             DispatchQueue.main.async { typing = true }
         }
         .onExitCommand(perform: cancel)
@@ -192,81 +201,10 @@ struct NewSpaceCard: View {
     private func create() {
         let named = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !named.isEmpty else { typing = true; return }
-        browser.addSpace(named: named, colour: colour)
+        browser.addSpace(named: named, icon: icon)
     }
 
     private func cancel() {
         withAnimation(Motion.glide) { browser.makingSpace = false }
-    }
-}
-
-// MARK: - the dots
-
-/// Every space, in order, as a dot of its colour at the column's foot — the
-/// one on screen larger. A click goes to a space, a click on the one on
-/// screen opens its menu, and a dot dragged sideways takes its space to
-/// another place in the order (⌃1–⌃9 follow it).
-struct SpaceDots: View {
-    @ObservedObject var browser: Browser
-
-    @State private var dragging: UUID?
-    @State private var from = 0
-    @State private var travel: CGFloat = 0
-
-    static let step: CGFloat = 18
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(browser.spaces.enumerated()), id: \.element.id) { index, space in
-                let held = dragging == space.id
-                let here = space.id == browser.spaceID && !browser.makingSpace
-                Circle()
-                    .fill(Spaces.colours[space.colour % Spaces.colours.count])
-                    .frame(width: here ? 9 : 6, height: here ? 9 : 6)
-                    .opacity(here || held ? 1 : 0.45)
-                    .frame(width: SpaceDots.step, height: 26)
-                    .contentShape(Rectangle())
-                    // The row makes way while the dot keeps to the hand (see the tabs').
-                    .offset(x: held ? travel - CGFloat(index - from) * SpaceDots.step : 0)
-                    .transaction { if held { $0.animation = nil } }
-                    .zIndex(held ? 1 : 0)
-                    .onTapGesture {
-                        if here { SpaceMenu.show(for: browser) } else { browser.switchSpace(to: space.id) }
-                    }
-                    .gesture(reorder(space, index: index))
-                    .help(here ? "\(space.name) — click for its menu" : space.name)
-            }
-            if browser.makingSpace {
-                Image(systemName: "plus")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(Palette.ink)
-                    .frame(width: SpaceDots.step, height: 26)
-                    .transition(.opacity)
-            }
-        }
-        .animation(Motion.settle, value: browser.spaces.map(\.id))
-        .animation(Motion.quick, value: browser.spaceID)
-        .animation(Motion.quick, value: browser.makingSpace)
-    }
-
-    private func reorder(_ space: Space, index: Int) -> some Gesture {
-        DragGesture(minimumDistance: 3, coordinateSpace: .global)
-            .onChanged { value in
-                if dragging != space.id {
-                    dragging = space.id
-                    from = index
-                }
-                travel = value.translation.width
-                let target = min(max(0, from + Int((travel / SpaceDots.step).rounded())), browser.spaces.count - 1)
-                if target != index {
-                    withAnimation(Motion.settle) { browser.moveSpace(space.id, to: target) }
-                }
-            }
-            .onEnded { _ in
-                withAnimation(Motion.settle) {
-                    dragging = nil
-                    travel = 0
-                }
-            }
     }
 }

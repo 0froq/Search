@@ -18,14 +18,21 @@ import WebKit
 struct Space: Codable, Identifiable, Equatable {
     var id: UUID
     var name: String
-    /// Which of `Spaces.colours`.
+    /// Which of `Spaces.colours` — from before spaces had icons; kept so an
+    /// older list still reads.
     var colour: Int
+    /// Its icon, one of `Spaces.icons`.
+    var icon: String?
     /// Where this space's downloads go; nil for the folder in Settings.
     var downloads: String?
 
     /// The first space: the session and the store there were before spaces.
     static let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000001") ?? UUID()
     var isFirst: Bool { id == Space.firstID }
+
+    /// The icon it shows: its own, or a house for the first and a
+    /// briefcase for any other that has none yet.
+    var symbol: String { icon.flatMap { Spaces.icons.contains($0) ? $0 : nil } ?? (isFirst ? "house" : "briefcase") }
 }
 
 enum Spaces {
@@ -38,6 +45,21 @@ enum Spaces {
         Color(red: 0.62, green: 0.40, blue: 0.90), // violet
     ]
     static let colourNames = ["Slate", "Blue", "Green", "Orange", "Red", "Violet"]
+
+    /// The icons a space can wear: Apple's own symbols, drawn in one weight
+    /// and one grey, grouped as work, thinking, leisure and life.
+    static let icons = [
+        "briefcase", "building.2", "desktopcomputer", "laptopcomputer", "chevron.left.forwardslash.chevron.right", "terminal",
+        "sparkles", "brain.head.profile", "lightbulb", "gamecontroller", "beach.umbrella", "cup.and.saucer",
+        "music.note", "film", "paintpalette", "camera", "house", "book",
+        "graduationcap", "cart", "airplane", "dumbbell", "leaf", "heart",
+    ]
+    static let iconNames = [
+        "Work", "Office", "Desktop", "Laptop", "Code", "Terminal",
+        "AI", "Thinking", "Ideas", "Games", "Leisure", "Café",
+        "Music", "Film", "Art", "Photos", "Home", "Reading",
+        "Studies", "Shopping", "Travel", "Sport", "Nature", "Personal",
+    ]
 
     private static var file: URL { Store.file("spaces.json") }
 
@@ -137,7 +159,9 @@ extension Browser {
     }
 
     private func enter(_ id: UUID) {
-        guard id != spaceID, spaces.contains(where: { $0.id == id }) else { return }
+        guard id != spaceID, let to = spaces.firstIndex(where: { $0.id == id }) else { return }
+        // Which way the icon at the foot turns over: the way the spaces lie.
+        if !makingSpace { spaceStep = to > (spaces.firstIndex { $0.id == spaceID } ?? 0) ? 1 : -1 }
         cancelTabEdit()
         if floater.showing { land() }
         writeSession(now: true)
@@ -150,7 +174,7 @@ extension Browser {
         spaceID = id
         Spaces.current = id
         Store.settings.set(id.uuidString, forKey: "space.current")
-        if let back = parked.removeValue(forKey: id) {
+        if let back = parked.removeValue(forKey: id), !back.tabs.isEmpty {
             showRow(back.tabs, active: back.active)
             if let active, !active.wake() { active.revive() }
         } else {
@@ -163,21 +187,29 @@ extension Browser {
         announce(space.name)
     }
 
+    /// Every other space's row, made ahead of time, so the column can show
+    /// the next space beside this one while two fingers bring it in.
+    func preloadSpaces() {
+        for space in spaces where space.id != spaceID && parked[space.id] == nil {
+            parked[space.id] = loadRow(space.id)
+        }
+    }
+
     func switchSpace(index: Int) {
         guard spaces.indices.contains(index) else { return }
         switchSpace(to: spaces[index].id)
     }
 
-    /// The colour a new space gets unless told: the first no space has yet.
-    var freeColour: Int {
-        let used = Set(spaces.map(\.colour))
-        return (0..<Spaces.colours.count).first { !used.contains($0) } ?? spaces.count % Spaces.colours.count
+    /// The icon a new space gets unless told: the first no space wears yet.
+    var freeIcon: String {
+        let used = Set(spaces.map(\.symbol))
+        return Spaces.icons.first { !used.contains($0) } ?? "briefcase"
     }
 
     /// A new space, empty, and on screen.
-    func addSpace(named name: String, colour: Int? = nil) {
+    func addSpace(named name: String, icon: String? = nil) {
         makingSpace = false
-        let made = Space(id: UUID(), name: name, colour: colour ?? freeColour)
+        let made = Space(id: UUID(), name: name, colour: 0, icon: icon ?? freeIcon)
         spaces.append(made)
         Spaces.write(spaces)
         switchSpace(to: made.id)
@@ -206,9 +238,9 @@ extension Browser {
         Spaces.write(spaces)
     }
 
-    func recolourSpace(_ id: UUID, to colour: Int) {
+    func setSpaceIcon(_ id: UUID, to icon: String) {
         guard let at = spaces.firstIndex(where: { $0.id == id }) else { return }
-        spaces[at].colour = colour
+        spaces[at].icon = icon
         Spaces.write(spaces)
     }
 
@@ -241,32 +273,49 @@ extension Browser {
 
 // MARK: - the dot
 
-/// The space on screen, as a dot of its colour: before the tabs in the row,
-/// beside the bookmarks in the column. Its menu lists the spaces and does
-/// the rest. Only there when spaces are on.
+/// The space on screen, as its icon: at the column's foot, or before the
+/// tabs in the row. One icon however many spaces there are; a click opens
+/// the menu. When the space changes the icon turns over the way the spaces
+/// went — out on one side, the next one in from the other.
 struct SpaceDot: View {
     @ObservedObject var browser: Browser
     @State private var hovering = false
+    /// What is drawn, a step behind the browser: the space changes in a
+    /// frame with nothing animated (see SpaceSwipe.slide), and the icon
+    /// turns over just after, on a change of its own.
+    @State private var shown: (key: String, symbol: String)?
 
     static let width: CGFloat = 26
 
+    private var symbol: String { browser.makingSpace ? "plus" : browser.space.symbol }
+    private var key: String { browser.makingSpace ? "new" : "\(browser.spaceID.uuidString)-\(browser.space.symbol)" }
+
     var body: some View {
-        // A plain button and a menu of AppKit's: SwiftUI's own Menu draws a
-        // pop-up button of its own in place of the dot.
         Button { SpaceMenu.show(for: browser) } label: {
-            Circle()
-                .fill(Spaces.colours[browser.space.colour % Spaces.colours.count])
-                .frame(width: 9, height: 9)
-                .frame(width: SpaceDot.width, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(hovering ? Palette.hover : .clear)
-                )
-                .contentShape(Rectangle())
+            ZStack {
+                Image(systemName: shown?.symbol ?? symbol)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(hovering ? Palette.ink : Palette.muted)
+                    .id(shown?.key ?? key)
+                    .transition(.push(from: browser.spaceStep > 0 ? .trailing : .leading))
+            }
+            .frame(width: SpaceDot.width, height: 26)
+            .clipped()
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(hovering ? Palette.hover : .clear)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help("\(browser.space.name) — ⌃1–⌃9 to switch spaces")
+        .help("\(browser.space.name) — ⌃1–⌃9 or two fingers sideways to switch")
+        .onChange(of: key) { _, now in
+            let symbol = symbol
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.22)) { shown = (now, symbol) }
+            }
+        }
         .animation(Motion.quick, value: hovering)
     }
 }
@@ -297,9 +346,11 @@ enum SpaceMenu {
         actions = []
         let menu = NSMenu()
         for (index, space) in browser.spaces.enumerated() {
-            menu.addItem(item(space.name, key: index < 9 ? "\(index + 1)" : "", checked: space.id == browser.spaceID) {
+            let entry = item(space.name, key: index < 9 ? "\(index + 1)" : "", checked: space.id == browser.spaceID) {
                 browser.switchSpace(to: space.id)
-            })
+            }
+            entry.image = NSImage(systemSymbolName: space.symbol, accessibilityDescription: nil)
+            menu.addItem(entry)
         }
         menu.addItem(.separator())
         menu.addItem(item("New Space…") { browser.askForSpace() })
@@ -308,13 +359,20 @@ enum SpaceMenu {
         menu.addItem(item("Rename “\(here.name)”…") {
             Ask.name("Rename Space", placeholder: here.name, initial: here.name, confirm: "Rename") { browser.renameSpace(here.id, to: $0) }
         })
-        let colours = NSMenu()
-        for (i, name) in Spaces.colourNames.enumerated() {
-            colours.addItem(item(name, checked: here.colour == i) { browser.recolourSpace(here.id, to: i) })
+        let icons = NSMenu()
+        for (symbol, name) in zip(Spaces.icons, Spaces.iconNames) {
+            let choice = item(name, checked: here.symbol == symbol) { browser.setSpaceIcon(here.id, to: symbol) }
+            choice.image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)
+            icons.addItem(choice)
         }
-        let colour = NSMenuItem(title: "Colour", action: nil, keyEquivalent: "")
-        colour.submenu = colours
-        menu.addItem(colour)
+        let icon = NSMenuItem(title: "Icon", action: nil, keyEquivalent: "")
+        icon.submenu = icons
+        menu.addItem(icon)
+        // The order is the swipe's, and ⌃1–⌃9's.
+        if let at = browser.spaces.firstIndex(where: { $0.id == here.id }) {
+            if at > 0 { menu.addItem(item("Move Left") { browser.moveSpace(here.id, to: at - 1) }) }
+            if at < browser.spaces.count - 1 { menu.addItem(item("Move Right") { browser.moveSpace(here.id, to: at + 1) }) }
+        }
         let folder = here.downloads.map { URL(fileURLWithPath: $0).lastPathComponent }
         menu.addItem(item(folder.map { "Downloads to “\($0)”…" } ?? "Downloads Folder…") {
             Ask.folder { browser.setSpaceDownloads(here.id, to: $0) }

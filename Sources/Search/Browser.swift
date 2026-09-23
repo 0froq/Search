@@ -638,6 +638,8 @@ final class Browser: NSObject, ObservableObject {
     /// whether the card for a new space stands in for them (see SpaceSwipe).
     @Published var spaceSwipe: CGFloat = 0
     @Published var makingSpace = false
+    /// Which way the last change of space went: 1 to the next, -1 back.
+    @Published var spaceStep = 1
 
     // MARK: - beginning and ending
 
@@ -731,6 +733,7 @@ final class Browser: NSObject, ObservableObject {
             Spaces.current = last
         }
         restoreSession()
+        if prefs.usesSpaces { preloadSpaces() }
     }
 
     /// The row of tabs the space on screen had last time, or one empty tab.
@@ -776,7 +779,7 @@ final class Browser: NSObject, ObservableObject {
         // were before (see Spaces.swift).
         prefs.$usesSpaces
             .dropFirst()
-            .sink { [weak self] on in if !on { self?.leaveSpaces() } }
+            .sink { [weak self] on in if on { self?.preloadSpaces() } else { self?.leaveSpaces() } }
             .store(in: &bag)
         prefs.$shielded
             .dropFirst()
@@ -1237,6 +1240,24 @@ final class Browser: NSObject, ObservableObject {
         let job = tab.web.printOperation(with: info)
         job.view?.frame = tab.web.bounds
         job.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+    }
+
+    /// A space's row as its session left it, made without touching the one
+    /// on screen: tabs with an address and no page yet, which cost next to
+    /// nothing until one is looked at (see Spaces.swift).
+    func loadRow(_ space: UUID) -> Parked {
+        let saved = Session.read(space: space)
+        var row: [Tab] = []
+        for entry in saved.tabs {
+            guard let url = URL(string: entry.url) else { continue }
+            let tab = Tab(configuration: Web.configuration(space: space))
+            prepare(tab)
+            tab.restore(url: url, title: entry.title)
+            tab.pin = entry.pin
+            row.append(tab)
+        }
+        let active = row.indices.contains(saved.active) ? row[saved.active].id : row.first?.id
+        return Parked(tabs: row, active: active)
     }
 
     /// Another space's row put on screen in place of this one (see

@@ -666,6 +666,15 @@ final class Bench {
                 SpaceSwipe.shared.began()
                 for _ in 0..<12 { SpaceSwipe.shared.moved(dx: dx / 12, dy: 0) }
                 SpaceSwipe.shared.ended()
+            case "hold":
+                // The fingers down and DX along, not yet let go — for a look
+                // at the column mid-swipe.
+                let dx = request["dx"] as? Double ?? -120
+                SpaceSwipe.shared.start(for: browser)
+                SpaceSwipe.shared.began()
+                for _ in 0..<12 { SpaceSwipe.shared.moved(dx: dx / 12, dy: 0) }
+            case "release":
+                SpaceSwipe.shared.ended()
             case "move":
                 if let index = request["index"] as? Int { browser.moveSpace(browser.spaceID, to: index - 1) }
             default: break
