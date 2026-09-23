@@ -313,6 +313,37 @@ final class Bench {
                 }
             }
 
+        case "tap":
+            // A real click on an element, delivered to the view as mouse
+            // events — trusted, as a hand's is — where `click` only runs
+            // element.click() in the page, which a password manager, for one,
+            // is right to ignore. `text=Sign in` picks a button or link by its
+            // words. Only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "tap only works on a --test run — it would click in your page"]); return }
+            guard let tab = find(request, in: browser), let selector = request["selector"] as? String else { answer(missing(request)); return }
+            house(tab)
+            let view = tab.web
+            view.evaluateJavaScript(Bench.locate(selector)) { value, error in
+                MainActor.assumeIsolated {
+                    guard let point = value as? [Double], point.count == 2, let window = view.window else {
+                        answer(["error": error?.localizedDescription ?? "nothing matches \(selector)"])
+                        return
+                    }
+                    let local = NSPoint(x: point[0], y: view.isFlipped ? point[1] : view.bounds.height - point[1])
+                    let spot = view.convert(local, to: nil)
+                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                        guard let event = NSEvent.mouseEvent(
+                            with: type, location: spot, modifierFlags: [],
+                            timestamp: ProcessInfo.processInfo.systemUptime,
+                            windowNumber: window.windowNumber, context: nil,
+                            eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0
+                        ) else { continue }
+                        if type == .leftMouseDown { view.mouseDown(with: event) } else { view.mouseUp(with: event) }
+                    }
+                    answer(["ok": true, "at": point.map { Int($0) }])
+                }
+            }
+
         case "click", "type", "submit":
             guard let tab = find(request, in: browser) else { answer(missing(request)); return }
             guard let selector = request["selector"] as? String else {
@@ -724,6 +755,30 @@ final class Bench {
         guard let value else { return NSNull() }
         if JSONSerialization.isValidJSONObject(["v": value]) { return value }
         return String(describing: value)
+    }
+
+    /// Where an element's middle is, in the page's own points, scrolled
+    /// into view first. A selector, or `text=…` for a button or link by its
+    /// words.
+    private static func locate(_ selector: String) -> String {
+        let sel = (try? JSONSerialization.data(withJSONObject: [selector])).flatMap { String(data: $0, encoding: .utf8) }.map { String($0.dropFirst().dropLast()) } ?? "\"\""
+        return """
+        (function () {
+          var s = \(sel), el = null;
+          if (s.indexOf('text=') === 0) {
+            var want = s.slice(5).trim().toLowerCase();
+            el = Array.prototype.find.call(document.querySelectorAll('button, a, [role=button], input[type=submit]'), function (e) {
+              return ((e.innerText || e.value || '').trim().toLowerCase()) === want;
+            }) || null;
+          } else {
+            el = document.querySelector(s);
+          }
+          if (!el) return null;
+          el.scrollIntoView({ block: 'center', inline: 'nearest' });
+          var r = el.getBoundingClientRect();
+          return [r.left + r.width / 2, r.top + r.height / 2];
+        })()
+        """
     }
 
     /// Click, type into, or submit the element a selector names. Typing goes

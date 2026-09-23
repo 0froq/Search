@@ -18,6 +18,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- 1Password's Sign in button works: an extension's page can send its tab to a website again, where it used to do nothing.
 - Tab moves between a form's fields again, as in every browser; ⌃Tab and ⌃⇧Tab switch tabs.
 - ⌘1–⌘9 (and ⌘0 to reset the zoom) work on every keyboard layout, AZERTY included: they follow the key, not the character it types.
 - A private tab now leaves nothing behind: it no longer shows up in Recently Closed. Thanks [@yuxino](https://github.com/yuxino) ([#6](https://github.com/driceroland/Search/pull/6))

@@ -11,7 +11,7 @@ don't build it twice.
 
 ## Now — fixes for the next update
 
-- [ ] **Password managers**: Bitwarden goes blank after signing in, and 1Password won't sign in. *(X, several)*
+- [ ] **Bitwarden goes blank after signing in** (and for one person doesn't load). Before signing in it works — popup, WebAssembly, background — so this needs an account to reproduce. *(X, several)*
 - [ ] **Dragging tabs to reorder them** in the row across the top. *(X)*
 - [ ] **A double-click on the title bar fills the screen** from anywhere along the top, in both layouts. *(X)*
 - [ ] **Passkeys on some sign-ins** (Google's "Use your passkey"). They work on a fresh install of 1.0; waiting on details. *([#10](https://github.com/driceroland/Search/issues/10), X)*

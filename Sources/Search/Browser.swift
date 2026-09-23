@@ -1096,6 +1096,24 @@ final class Browser: NSObject, ObservableObject {
         return tab
     }
 
+    /// An extension's page sending its own tab to a website — 1Password's
+    /// "Sign in" does, when its Mac app isn't connected. The page's view was
+    /// built from the extension's configuration, which WebKit keeps to that
+    /// extension's own pages, so the load went nowhere and the button did
+    /// nothing. The tab is swapped where it stands for an ordinary one on
+    /// the site: to the eye, the page went there.
+    func replace(_ tab: Tab, going url: URL) {
+        guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        let fresh = Tab(bench: tab.bench, configuration: Browser.extensionConfiguration(for: url))
+        prepare(fresh)
+        let wasActive = activeID == tab.id
+        tabs[index] = fresh
+        fresh.go(to: url)
+        if wasActive { activeID = fresh.id }
+        tab.close()
+        rememberSession()
+    }
+
     /// An address from before extensions moved to chrome-extension://, as
     /// it is now; any other, as it is.
     static func page(_ url: URL) -> URL {
@@ -1585,6 +1603,17 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         // answer, handed to the extension, and never loaded.
         if ExtensionAuth.intercept(url, browser: self) {
             decisionHandler(.cancel)
+            return
+        }
+
+        // An extension's page sending its own tab to a website (see
+        // replace(_:going:)).
+        if #available(macOS 15.4, *), ["http", "https"].contains(scheme),
+           action.targetFrame?.isMainFrame ?? true,
+           webView.url?.scheme == Extensions.scheme,
+           let tab = tab(for: webView) {
+            decisionHandler(.cancel)
+            DispatchQueue.main.async { [weak self] in self?.replace(tab, going: url) }
             return
         }
 
