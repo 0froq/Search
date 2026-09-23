@@ -373,6 +373,37 @@ final class Bench {
             out["lightsHidden"] = Fold.titlebar?.isHidden ?? false
             answer(out)
 
+        case "press":
+            // A key pressed on the app as a whole, through its event queue —
+            // so its own shortcuts see it first, as they do a real press;
+            // `key` goes straight to a page instead. Only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "press only works on a --test run — it would press keys in your browser"]); return }
+            guard let code = request["code"] as? Int, let chars = request["chars"] as? String
+            else { answer(["error": "press needs a key code and the characters it types"]); return }
+            var flags: NSEvent.ModifierFlags = []
+            for name in request["mods"] as? [String] ?? [] {
+                switch name {
+                case "cmd": flags.insert(.command)
+                case "shift": flags.insert(.shift)
+                case "ctrl": flags.insert(.control)
+                case "opt": flags.insert(.option)
+                default: break
+                }
+            }
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(
+                    with: type, location: .zero, modifierFlags: flags,
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: Links.window?.windowNumber ?? 0, context: nil,
+                    characters: chars, charactersIgnoringModifiers: chars,
+                    isARepeat: false, keyCode: UInt16(code)
+                ) else { continue }
+                NSApp.postEvent(event, atStart: false)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                answer(["active": browser.active.map { String($0.id.uuidString.prefix(8)).lowercased() } ?? ""])
+            }
+
         case "key":
             // Keys pressed on a tab, as real key events handed to its view —
             // for what the page does with them, and what comes back unused.

@@ -642,6 +642,11 @@ struct ContentView: View {
         }
     }
 
+    /// The keys of the top row, by where they sit rather than what they type.
+    static let digits: [UInt16: Int] = [
+        18: 1, 19: 2, 20: 3, 21: 4, 23: 5, 22: 6, 26: 7, 28: 8, 25: 9, 29: 0,
+    ]
+
     private func take(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
@@ -691,24 +696,25 @@ struct ContentView: View {
             return true
         }
 
-        // Tab walks the row and comes round to the first again; ⇧Tab walks it
-        // the other way. Other browsers give Tab to the page — here the row is
-        // the only thing there is to move between, so it gets the key.
+        // Tab is the page's: it moves between a form's fields and a page's
+        // links, as in every browser. It used to walk the row of tabs, which
+        // took it from anyone filling in a form. ⌃Tab walks the row and comes
+        // round to the first again, ⌃⇧Tab the other way — the keys every
+        // other browser uses for that.
         //
-        // Except while an address is being typed. Then the list under the field
-        // is what there is to move through, and Return takes whatever the walk
-        // landed on.
+        // While an address is being typed, the list under the field is what
+        // there is to move through, and Return takes whatever the walk landed on.
         if event.keyCode == 48, !flags.contains(.command), !flags.contains(.option) {
+            if flags.contains(.control) {
+                browser.step(flags.contains(.shift) ? -1 : 1)
+                return true
+            }
             if browser.editingTab != nil { return true }
-            // Filling something in on the page: the key belongs to the field,
-            // which may well be offering a completion to take with it.
-            if !browser.fieldShowing, browser.active?.typing == true { return false }
             if browser.fieldShowing, !browser.offers.isEmpty {
                 browser.walk(flags.contains(.shift) ? -1 : 1)
                 return true
             }
-            browser.step(flags.contains(.shift) ? -1 : 1)
-            return true
+            return false
         }
 
         // A shortcut an extension registered — ⌥⇧D, ⌃⇧Y — before ours, since
@@ -723,6 +729,20 @@ struct ContentView: View {
 
         // Anything with ⌥ or ⌃ on top is somebody else's.
         guard !flags.contains(.option), !flags.contains(.control) else { return false }
+
+        // ⌘1 through ⌘9, and ⌘0, by the key rather than the character it
+        // types. On AZERTY and many other layouts the top row types &, é, "…
+        // unless shift is held, so matching the character left these
+        // shortcuts dead there; the shortcut belongs to the key, as it does
+        // in every other browser. The ninth is the last tab, however many.
+        if !shifted, let number = ContentView.digits[event.keyCode] {
+            if number == 0 {
+                browser.resetZoom()
+            } else {
+                browser.select(index: number == 9 ? browser.tabs.count - 1 : number - 1)
+            }
+            return true
+        }
 
         switch key {
         case "t" where !shifted:
@@ -797,11 +817,6 @@ struct ContentView: View {
         case "]":
             shifted ? browser.step(1) : browser.forward()
         default:
-            // ⌘1 through ⌘9: the ninth is the last one, however many there are.
-            if let number = Int(key), (1...9).contains(number), !shifted {
-                browser.select(index: number == 9 ? browser.tabs.count - 1 : number - 1)
-                return true
-            }
             // ⌘← and ⌘→, for hands that never learned the brackets.
             if event.keyCode == 123 { browser.back(); return true }
             if event.keyCode == 124 { browser.forward(); return true }
