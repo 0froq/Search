@@ -620,6 +620,8 @@ final class Browser: NSObject, ObservableObject {
     var pressure: DispatchSourceMemoryPressure?
     /// Downloads still under way. See `keep(_:)`.
     var downloading: [WKDownload] = []
+    /// The Chrome Web Store's pages, told when installs come and go. See StoreRelay.swift.
+    var storeWatch: AnyCancellable?
     private var hush: DispatchWorkItem?
     private var zoomShown = 100
     private var remembering = false
@@ -743,6 +745,7 @@ final class Browser: NSObject, ObservableObject {
     /// The few settings that something else has to be told about. The rest are
     /// read where they are used.
     private func follow() {
+        followStore()
         prefs.$shielded
             .dropFirst()
             .sink { [weak self] on in
@@ -1254,6 +1257,7 @@ final class Browser: NSObject, ObservableObject {
         }
         tab.onPickEnd = { [weak self] _ in self?.veiling = false }
         tab.onImageMenu = { [weak self] tab, url in self?.showImageMenu(for: tab, at: url) }
+        tab.onStoreAdd = { [weak self] tab in self?.addFromStore(tab) }
 
         // The caret in a sign-in box: the accounts kept for this site hang
         // from the box, and go when the caret does. Nothing is filled on
@@ -1746,6 +1750,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let tab = tab(for: webView), let url = tab.address else { return }
         tab.uncover()
+        tellStore(tab)
         // A page that arrived after a password went out: did the sign-in take?
         tab.settleSignIn()
         // The icon is asked for whether or not the tab is showing one: it may

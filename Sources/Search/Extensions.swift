@@ -1166,6 +1166,10 @@ private struct ExtensionMenu: View {
             }
             Divider().overlay(Palette.hairline)
             VStack(spacing: 1) {
+                Foot("storefront", "Chrome Web Store…") {
+                    extensions.menuOpen = false
+                    extensions.browser?.open(Browser.webStore, foreground: true)
+                }
                 Foot("folder", "Load Unpacked…") {
                     extensions.menuOpen = false
                     DispatchQueue.main.async { extensions.installFolder() }
