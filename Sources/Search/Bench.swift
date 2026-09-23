@@ -549,6 +549,62 @@ final class Bench {
                 "titleBar": y <= Double(window.frame.height - window.contentLayoutRect.height),
             ])
 
+        case "film":
+            // The whole window, title bar and lights included, drawn every few
+            // hundredths of a second while something animates — what a person
+            // would see of it, from a probe started hidden that nobody sees.
+            // The lights' own slide is a Core Animation one, which a drawing
+            // doesn't show: where they are is reported beside each frame.
+            guard Store.testing else { answer(["error": "film only works on a --test run"]); return }
+            guard let window = Links.window, let frame = window.contentView?.superview,
+                  let path = request["path"] as? String, !path.isEmpty
+            else { answer(["error": "film needs something to do and a path"]); return }
+            let count = min(60, max(1, request["frames"] as? Int ?? 14))
+            let every = min(0.5, max(0.01, request["every"] as? Double ?? 0.03))
+            // The column's corner — the lights, the pins, the first rows — is
+            // what moves; the whole window would take longer to draw than a
+            // frame lasts. Written out once the filming is over.
+            let corner = NSRect(x: 0, y: frame.bounds.height - 460, width: min(380, frame.bounds.width), height: 460)
+            // The pages under it take a third of a second each to draw into a
+            // picture, longer than the whole animation: they sit the filming
+            // out, and come back after.
+            func pages(in view: NSView) -> [NSView] { view is WKWebView ? [view] : view.subviews.flatMap(pages) }
+            let resting = pages(in: frame).filter { !$0.isHidden }
+            resting.forEach { $0.isHidden = true }
+            var shots: [[String: Any]] = []
+            var pictures: [NSBitmapImageRep] = []
+            let started = CACurrentMediaTime()
+            func take(_ index: Int) {
+                guard index < count else {
+                    resting.forEach { $0.isHidden = false }
+                    for (index, picture) in pictures.enumerated() {
+                        let file = path + String(format: "-%02d.png", index)
+                        if let data = picture.representation(using: .png, properties: [:]),
+                           (try? data.write(to: URL(fileURLWithPath: file))) != nil { shots[index]["file"] = file }
+                    }
+                    answer(["frames": shots])
+                    return
+                }
+                var shot: [String: Any] = ["t": Int((CACurrentMediaTime() - started) * 1000)]
+                if let picture = frame.bitmapImageRepForCachingDisplay(in: corner) {
+                    frame.cacheDisplay(in: corner, to: picture)
+                    pictures.append(picture)
+                }
+                if let bar = Fold.titlebar {
+                    let moved = bar.layer?.presentation()?.value(forKeyPath: "transform.translation.x") as? CGFloat ?? 0
+                    shot["lights"] = ["hidden": bar.isHidden, "x": Int(moved.rounded())]
+                }
+                shots.append(shot)
+                DispatchQueue.main.asyncAfter(deadline: .now() + every) { take(index + 1) }
+            }
+            take(0)
+            switch request["action"] as? String {
+            case "peek": browser.peek(true)
+            case "unpeek": browser.peek(false)
+            case "fold": browser.toggleFold()
+            default: break
+            }
+
         case "ui":
             // Open or close the app's own panels, to reproduce what a person
             // did without a person.
@@ -576,7 +632,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "ui",
             ]])
         }
     }

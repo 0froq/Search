@@ -35,6 +35,7 @@
     ./bench hit X Y [double]           what a press at X Y (points from the window's top left) lands on,
                                        and whether a drag from there would move the window;
                                        double: test run, a double-click there (start the probe hidden)
+    ./bench film peek|unpeek|fold PATH [N] [SECS]  the window drawn N times while it animates → PATH-00.png… — --test runs only
     ./bench ui KEY VALUE               settings/passwords/welcome/history/downloads/bookmarks/hidden on|off,
                                        look light|dark|system, sidebar on|off, inspector on|off, folded on|off, peek on|off
 
@@ -163,6 +164,12 @@ def main(argv):
         if len(args) not in (2, 3) or (len(args) == 3 and args[2] != "double"): sys.exit("usage: bench hit X Y [double]")
         request["x"], request["y"] = float(args[0]), float(args[1])
         if len(args) == 3: request["double"] = True
+    elif verb == "film":
+        if len(args) not in (2, 3, 4) or args[0] not in ("peek", "unpeek", "fold", "none"):
+            sys.exit("usage: bench film peek|unpeek|fold|none PATH [FRAMES] [EVERY]")
+        request["action"], request["path"] = args[0], os.path.abspath(args[1])
+        if len(args) > 2: request["frames"] = int(args[2])
+        if len(args) > 3: request["every"] = float(args[3])
     elif verb not in ("tabs", "probe", "extensions"):
         sys.exit(f"unknown command “{verb}” — see bench help")
 
