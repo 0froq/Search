@@ -49,6 +49,10 @@ struct Omnibox: View {
                 // because the strip at the top isn't part of what the eye is
                 // measuring.
                 .padding(.bottom, 60)
+                // The list's arrival, its rows sliding between keystrokes and
+                // its leaving are all animated from here: nothing that changes
+                // the suggestions does it inside an animation of its own.
+                .animation(Motion.settle, value: browser.offers)
                 .animation(Motion.settle, value: refused)
         }
     }
