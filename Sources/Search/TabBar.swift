@@ -15,8 +15,9 @@ struct TabBar: View {
     @State private var landing = false
     /// The plus only comes out when the pointer is in the row.
     @State private var nearby = false
-    @State private var geoWidth: CGFloat = 0
     @State private var plussed = false
+    /// How wide the doors at the far end are, extension buttons included.
+    @State private var doors: CGFloat = 0
 
     var body: some View {
         // A GeometryReader is only here to measure the width. Its content is
@@ -28,38 +29,59 @@ struct TabBar: View {
             ZStack(alignment: .leading) {
                 // The empty half of the strip is what you grab to move the
                 // window; the tabs keep the run they sit on.
-                DragStrip(reserved: taken(in: geo.size.width), trailing: Metrics.helm + 26 + 24)
+                DragStrip(reserved: Metrics.lights + run(in: geo.size.width) + Metrics.tabGap + Metrics.plusWidth, trailing: Metrics.helm + 26 + 24)
                 // And the corner the lights sit in, which is title bar too —
                 // the one stretch left to take hold of when tabs fill the row.
                 DragStrip()
                     .frame(width: Metrics.lights)
 
                 HStack(spacing: Metrics.tabGap) {
-                    ForEach(Array(browser.tabs.enumerated()), id: \.element.id) { index, tab in
-                        // A pinned square moves among pinned squares, a title
-                        // among titles: each has its own stride.
-                        let step = (tab.pin != nil ? Metrics.pinWidth : width(in: geo.size.width)) + Metrics.tabGap
-                        let held = dragging == tab.id
-                        TabPill(
-                            browser: browser,
-                            prefs: browser.prefs,
-                            tab: tab,
-                            live: tab.id == browser.activeID,
-                            width: width(in: geo.size.width),
-                            room: geo.size.width - Metrics.lights - 12,
-                            pill: pill,
-                            close: { browser.close(tab) }
-                        )
-                        // The row reflows around it while the pill itself keeps
-                        // up with the hand: what it has travelled, less the
-                        // ground its new place has already given it.
-                        .offset(x: held ? travel - CGFloat(index - from) * step : 0)
-                        .zIndex(held ? 1 : 0)
-                        .shadow(color: .black.opacity(held ? 0.14 : 0), radius: 12, y: 4)
-                        .gesture(reorder(tab: tab, index: index, step: step))
+                    // The tabs, in a run of their own. While they fit, it is
+                    // exactly as wide as they are and nothing about the row
+                    // changes. Past what the window holds at their narrowest
+                    // it takes the room there is and scrolls inside its own
+                    // edges — never under the lights, never over the doors —
+                    // keeping the tab you are on in view.
+                    ScrollViewReader { reader in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: Metrics.tabGap) {
+                                ForEach(Array(browser.tabs.enumerated()), id: \.element.id) { index, tab in
+                                    // A pinned square moves among pinned squares, a title
+                                    // among titles: each has its own stride.
+                                    let step = (tab.pin != nil ? Metrics.pinWidth : width(in: geo.size.width)) + Metrics.tabGap
+                                    let held = dragging == tab.id
+                                    TabPill(
+                                        browser: browser,
+                                        prefs: browser.prefs,
+                                        tab: tab,
+                                        live: tab.id == browser.activeID,
+                                        width: width(in: geo.size.width),
+                                        room: geo.size.width - Metrics.lights - 12,
+                                        pill: pill,
+                                        close: { browser.close(tab) }
+                                    )
+                                    // The row reflows around it while the pill itself keeps
+                                    // up with the hand: what it has travelled, less the
+                                    // ground its new place has already given it.
+                                    .offset(x: held ? travel - CGFloat(index - from) * step : 0)
+                                    .zIndex(held ? 1 : 0)
+                                    .shadow(color: .black.opacity(held ? 0.14 : 0), radius: 12, y: 4)
+                                    .gesture(reorder(tab: tab, index: index, step: step))
+                                    .id(tab.id)
+                                }
+                            }
+                            .frame(height: Metrics.strip)
+                        }
+                        .scrollDisabled(!overflowing(in: geo.size.width))
+                        .frame(width: run(in: geo.size.width))
+                        .onAppear { reveal(reader, in: geo.size.width) }
+                        .onChange(of: overflowing(in: geo.size.width)) { _, _ in reveal(reader, in: geo.size.width) }
+                        .onChange(of: browser.activeID) { _, _ in reveal(reader, in: geo.size.width, gliding: true) }
                     }
-                    // The way to a new page, in the row rather than beside it.
-                    // It stays out of sight until the pointer is up here.
+
+                    // The way to a new page, right after the tabs rather than
+                    // at the end of their run, so it is there however far the
+                    // run has scrolled. Out of sight until the pointer is up here.
                     Button { browser.newTab() } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .medium))
@@ -84,13 +106,22 @@ struct TabBar: View {
 
                     // Back, forward, reload, and the bookmarks, at the far end
                     // of the row. The dropdown hangs from the last one.
-                    ExtensionSlot()
-                    Helm(browser: browser)
-                        .padding(.trailing, 8)
-                    Door(icon: "bookmark", help: "Bookmarks") { browser.bookmarksOpen.toggle() }
-                        .popover(isPresented: $browser.bookmarksOpen, arrowEdge: .bottom) {
-                            BookmarksDropdown(browser: browser, bookmarks: browser.bookmarks)
+                    HStack(spacing: Metrics.tabGap) {
+                        ExtensionSlot()
+                        Helm(browser: browser)
+                            .padding(.trailing, 8)
+                        Door(icon: "bookmark", help: "Bookmarks") { browser.bookmarksOpen.toggle() }
+                            .popover(isPresented: $browser.bookmarksOpen, arrowEdge: .bottom) {
+                                BookmarksDropdown(browser: browser, bookmarks: browser.bookmarks)
+                            }
+                    }
+                    .background {
+                        GeometryReader { box in
+                            Color.clear
+                                .onAppear { doors = box.size.width }
+                                .onChange(of: box.size.width) { _, width in doors = width }
                         }
+                    }
                 }
                 // The traffic lights are the system's. The row starts after
                 // them and stays there — nothing here moves to get out of
@@ -100,8 +131,6 @@ struct TabBar: View {
                 .coordinateSpace(name: "strip")
             }
             .frame(width: geo.size.width, height: geo.size.height)
-            .onAppear { geoWidth = geo.size.width }
-            .onChange(of: geo.size.width) { _, width in geoWidth = width }
         }
         .frame(height: Metrics.strip)
         .onHover { nearby = $0 }
@@ -143,32 +172,64 @@ struct TabBar: View {
             }
     }
 
-    /// Where the tabs stop and the window's own drag area starts.
-    private func taken(in room: CGFloat) -> CGFloat {
+    /// Brings the tab you are on into view once the run scrolls: at once
+    /// when the window first shows it, on the strip's spring when you pick
+    /// another. A turn of the run loop later, so the run has been laid out.
+    private func reveal(_ reader: ScrollViewProxy, in strip: CGFloat, gliding: Bool = false) {
+        guard overflowing(in: strip), let id = browser.activeID else { return }
+        DispatchQueue.main.async {
+            if gliding {
+                withAnimation(Motion.glide) { reader.scrollTo(id) }
+            } else {
+                reader.scrollTo(id)
+            }
+        }
+    }
+
+    /// How wide the run of tabs is: as wide as the tabs while they fit, as
+    /// wide as the room there is once they don't.
+    private func run(in strip: CGFloat) -> CGFloat {
+        min(content(in: strip), room(in: strip))
+    }
+
+    private func overflowing(in strip: CGFloat) -> Bool {
+        content(in: strip) > room(in: strip) + 0.5
+    }
+
+    /// Everything in the run at the width the tabs get — and the address
+    /// field's width for a tab being edited, which grows to take it.
+    private func content(in strip: CGFloat) -> CGFloat {
+        let each = width(in: strip)
         let pinned = CGFloat(browser.pinnedCount)
         let loose = CGFloat(browser.tabs.count) - pinned
-        let gaps = CGFloat(max(0, browser.tabs.count)) * Metrics.tabGap
-        return Metrics.lights
-            + pinned * Metrics.pinWidth
-            + loose * width(in: 0, given: geoWidth)
-            + gaps
-            + Metrics.plusWidth
+        var total = pinned * Metrics.pinWidth + loose * each
+            + CGFloat(max(0, browser.tabs.count - 1)) * Metrics.tabGap
+        if let id = browser.editingTab, let tab = browser.tabs.first(where: { $0.id == id }) {
+            total += min(340, strip - Metrics.lights - 12) - (tab.pin != nil ? Metrics.pinWidth : each)
+        }
+        return total
+    }
+
+    /// The strip, less the lights, the plus, the doors at the far end and
+    /// the air around them. The doors are measured; until they have been,
+    /// the three of the helm and the bookmarks stand in for them.
+    private func room(in strip: CGFloat) -> CGFloat {
+        let far = doors > 0 ? doors : Metrics.helm + 26
+        return max(0, strip - Metrics.lights - 12 - Metrics.plusWidth - far - 3 * Metrics.tabGap)
     }
 
     /// Every loose tab is the same width, so the cross is always in the same
-    /// place. Past a dozen or so they start giving ground rather than running
-    /// off the end of the window. The pinned squares and the plus take their
-    /// room off the top.
-    private func width(in room: CGFloat, given fallback: CGFloat = 0) -> CGFloat {
-        let space = room > 0 ? room : fallback
+    /// place. Past a dozen or so they start giving ground; too narrow for a
+    /// title they show their mark alone (Metrics.tabTitled), down to the
+    /// mark and its air. Past that, the run scrolls. The pinned squares take
+    /// their room off the top.
+    private func width(in strip: CGFloat) -> CGFloat {
         let pinned = CGFloat(browser.pinnedCount)
         let loose = CGFloat(browser.tabs.count) - pinned
         guard loose > 0 else { return Metrics.tabWidth }
-        let spent = Metrics.lights + Metrics.helm + 12 + 26
-            + pinned * Metrics.pinWidth
-            + CGFloat(browser.tabs.count) * Metrics.tabGap
-            + Metrics.plusWidth
-        return max(Metrics.tabMinWidth, min(Metrics.tabWidth, (space - spent) / loose))
+        let spent = pinned * Metrics.pinWidth
+            + CGFloat(max(0, browser.tabs.count - 1)) * Metrics.tabGap
+        return max(Metrics.tabMinWidth, min(Metrics.tabWidth, (room(in: strip) - spent) / loose))
     }
 }
 
@@ -242,6 +303,10 @@ private struct TabPill: View {
 
     private var editing: Bool { browser.editingTab == tab.id }
     private var pinned: Bool { tab.pin != nil && !editing }
+    /// Too narrow for a title: the site's mark alone, the title in the
+    /// tooltip, and ⌘W or the menu to close it — a cross on something this
+    /// small would be what a click to pick the tab lands on.
+    private var compact: Bool { !editing && !pinned && width < Metrics.tabTitled }
 
     /// A pinned tab is a square, an edited one is a field, everything else is
     /// its share of what is left.
@@ -299,7 +364,7 @@ private struct TabPill: View {
         })
         .onHover { hovering = $0 }
         .contextMenu { TabMenu(browser: browser, tab: tab, close: close) }
-        .help(pinned ? tab.label : "")
+        .help(pinned || compact ? tab.label : "")
         .animation(Motion.quick, value: hovering)
         .animation(Motion.glide, value: editing)
         .animation(Motion.glide, value: tab.pin)
@@ -312,7 +377,25 @@ private struct TabPill: View {
         .transition(.scale(scale: 0.9, anchor: .leading).combined(with: .opacity))
     }
 
+    @ViewBuilder
     private var loose: some View {
+        if compact {
+            ZStack {
+                if tab.loading {
+                    Ring()
+                } else {
+                    Mark(icon: prefs.glyph == .icons ? tab.icon : nil, letter: tab.monogram, size: 15, dim: tab.asleep)
+                }
+            }
+            .frame(width: 16, height: 16)
+            .padding(.vertical, 6)
+            .frame(width: span)
+        } else {
+            titled
+        }
+    }
+
+    private var titled: some View {
         HStack(spacing: 6) {
             if editing {
                 TabAddressField(browser: browser)
@@ -395,10 +478,11 @@ private struct TabPill: View {
             // it says it without adding anything to the window.
             ZStack(alignment: .leading) {
                 Rectangle().fill(Palette.wash)
-                // Not on a pinned square. Thirty points of grey filling from
-                // the left behind a single letter says nothing about anything —
-                // it needs the width of a title to read as progress at all.
-                if !pinned {
+                // Not on a pinned square, nor a tab down to its mark. Thirty
+                // points of grey filling from the left behind a single letter
+                // says nothing about anything — it needs the width of a title
+                // to read as progress at all.
+                if !pinned && !compact {
                     Rectangle()
                         .fill(Palette.ink.opacity(0.055))
                         .frame(width: span * tab.reading)

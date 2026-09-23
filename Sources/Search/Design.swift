@@ -107,9 +107,13 @@ enum Metrics {
     static let bare: CGFloat = 34
     /// Tabs are a fixed width rather than the width of their titles, so the
     /// cross always lands in the same place and the row never rearranges
-    /// itself while you read it. They give way when there are too many.
+    /// itself while you read it. They give way when there are too many:
+    /// narrower than tabTitled they show their site's mark alone, and they
+    /// stop at tabMinWidth, the mark and its air. Past that the row scrolls,
+    /// inside its own edges.
     static let tabWidth: CGFloat = 186
-    static let tabMinWidth: CGFloat = 104
+    static let tabTitled: CGFloat = 80
+    static let tabMinWidth: CGFloat = 36
     static let tabGap: CGFloat = 2
     /// A pinned tab is a square the height of the row, holding one letter.
     static let pinWidth: CGFloat = 30
