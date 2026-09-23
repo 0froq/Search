@@ -173,6 +173,10 @@ enum ExtensionShims {
     static let script = #"""
     (() => {
       const root = globalThis;
+      // Taken now, not looked up at each use: a sandbox that later locks
+      // the globals away (MetaMask's LavaMoat) would break the shim's own
+      // code that needs them — every fetch of a Request, every import.
+      const { URL, FileReader, Response, Blob, File, DOMException, HTMLImageElement, HTMLAnchorElement, Element } = root;
       const chrome = root.chrome || root.browser;
       if (!chrome || root.__searchShim) return;
       Object.defineProperty(root, "__searchShim", { value: true });
