@@ -56,8 +56,8 @@ final class FormRelay: NSObject, WKScriptMessageHandler {
     /// answers isUserVerifyingPlatformAuthenticatorAvailable() with false,
     /// yet the API object exists, so sites offer the passkey path and strand
     /// you there. Taken away, they go straight to the password. Signed with
-    /// the entitlement, as releases are, this is on — and macOS still wants
-    /// its own permission before the first passkey (see Passkeys.swift).
+    /// the entitlement, as releases are, this is on, and Search carries out
+    /// the sites' requests itself (see Passkeys.swift).
     static var passkeysOffered: Bool {
         get { Store.settings.bool(forKey: "passkeys") }
         set { Store.settings.set(newValue, forKey: "passkeys") }

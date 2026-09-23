@@ -420,6 +420,7 @@ final class Bench {
             default: out["passkeyAccess"] = "notDetermined"
             }
             out["passkeyAsks"] = Passkeys.asked
+            out["passkeyLast"] = Passkeys.last
             answer(out)
 
         case "press":

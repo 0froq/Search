@@ -233,7 +233,7 @@ final class Tab: ObservableObject, Identifiable {
     private let forms = FormRelay()
     private let images = ImageRelay()
     private let shop = StoreRelay()
-    private let passkeyGate = PasskeyGate()
+    private let passkeyRelay = PasskeyRelay()
     private let ears = AudioWatch()
     private var lastY: Double = 0
 
@@ -336,13 +336,13 @@ final class Tab: ObservableObject, Identifiable {
         controller.removeScriptMessageHandler(forName: FormRelay.name)
         controller.removeScriptMessageHandler(forName: ImageRelay.name)
         controller.removeScriptMessageHandler(forName: StoreRelay.name)
-        controller.removeScriptMessageHandler(forName: PasskeyGate.name)
+        controller.removeScriptMessageHandler(forName: PasskeyRelay.name)
         controller.add(relay, name: ScrollRelay.name)
         controller.add(veils_, name: VeilRelay.name)
         controller.add(images, name: ImageRelay.name)
         controller.add(shop, name: StoreRelay.name)
         controller.add(forms, name: FormRelay.name)
-        controller.addScriptMessageHandler(passkeyGate, contentWorld: .page, name: PasskeyGate.name)
+        controller.addScriptMessageHandler(passkeyRelay, contentWorld: .page, name: PasskeyRelay.name)
         Shield.shared.protect(controller)
         built = web
         arm(hiding: veils)
@@ -461,11 +461,11 @@ final class Tab: ObservableObject, Identifiable {
                     forMainFrameOnly: false
                 )
             )
-        } else if Passkeys.undecided {
-            // Until macOS has been asked whether Search may use your passkeys,
-            // a site's request for one waits for the question (see Passkeys).
+        } else {
+            // A site's passkey request is carried out by Search itself: WebKit
+            // only does that for an app's own domains (see Passkeys.swift).
             controller.addUserScript(
-                WKUserScript(source: Passkeys.gate, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+                WKUserScript(source: PasskeyRelay.script, injectionTime: .atDocumentStart, forMainFrameOnly: false)
             )
         }
         guard !css.isEmpty else { return }
@@ -918,7 +918,7 @@ final class Tab: ObservableObject, Identifiable {
         controller.removeScriptMessageHandler(forName: FormRelay.name)
         controller.removeScriptMessageHandler(forName: ImageRelay.name)
         controller.removeScriptMessageHandler(forName: StoreRelay.name)
-        controller.removeScriptMessageHandler(forName: PasskeyGate.name)
+        controller.removeScriptMessageHandler(forName: PasskeyRelay.name)
         controller.removeAllUserScripts()
         web.onPull = nil
         web.onTouch = nil
