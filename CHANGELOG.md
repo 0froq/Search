@@ -25,6 +25,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- New Tab makes a new empty tab each time, even when the current tab is empty. ([#35](https://github.com/driceroland/Search/issues/35))
 - Search opens on macOS 14 again: it quit as it opened, before its window, setting the look chosen in Settings on an application that didn't exist yet.
 - Folded away with ⌘S and brought out at the edge, the column arrives whole: the traffic lights and the pinned tabs come in with it instead of standing there before it.
 - A double-click along the top of the window fills the screen, as a title bar's does: it was answered twice and ended where it started. In the column's mode the page's top edge takes it too, folded away with ⌘S included, where nothing did.

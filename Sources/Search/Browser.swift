@@ -928,21 +928,12 @@ final class Browser: NSObject, ObservableObject {
 
     // MARK: - tabs
 
-    /// ⌘T. On a tab that is already blank this just puts the cursor back in the
-    /// field — otherwise holding ⌘T leaves a row of identical empty tabs.
     func newTab() {
         // An extension's new tab page, if one asked and you said yes.
         if #available(macOS 15.4, *), let page = Extensions.shared.newTabPage {
             open(page, foreground: true)
             summoning = false
             rememberSession()
-            return
-        }
-        if let active, active.isBlank {
-            summoning = false
-            editing = true
-            typed = ""
-            focusRequest += 1
             return
         }
         let tab = Tab()
