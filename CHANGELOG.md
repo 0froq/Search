@@ -22,6 +22,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- With extensions installed, the window no longer waits for them: they load once it is up. The first launch after an update, when Search fits its Chrome compatibility layer to each extension again, does that away from the main thread — with Grammarly, the window had stood still for half a second. Thanks [@andupoto](https://x.com/andupoto) for the report
 - Search opens faster when you have many bookmarks: the Bookmarks menu used to be built in full, every folder included, before the window could appear — about a quarter of a second for 1,500 bookmarks, at every launch. Its bookmarks are now put in as the menu opens, a folder's as that folder opens. Thanks [@andupoto](https://x.com/andupoto) for the report
 - Before macOS 15.4, where Search can't run extensions, the Chrome Web Store no longer shows an "Add to Search" button that did nothing when pressed; Settings › Extensions says what they need. Thanks [@andupoto](https://x.com/andupoto) for the report
 - Started hidden — `open -j`, or anything that launches Search in the background — Search comes up with its window, hidden with it until shown, where it could come up with no window at all.
