@@ -12,12 +12,19 @@ import WebKit
 // keeps what it takes to come back exactly where it was.
 
 enum Web {
-    /// Modern WebKit pools processes by data store on its own — every tab
-    /// asking for the same one is what gets the second tab a warm process, and
-    /// the old WKProcessPool knob does nothing now.
     /// What every view says it is after "AppleWebKit … (KHTML, like Gecko)"
     /// — web tabs and extension views alike (see Extensions.init).
     static let userAgentName = "Version/26.5 Safari/605.1.15"
+
+    /// One pool for every tab. The property is deprecated and said to do
+    /// nothing now, but a configuration without it gets a pool of its own
+    /// when its view is made — so every new tab started a web process from
+    /// cold, fonts registered and all, on the main thread, before its page
+    /// could begin: 41 to 59 ms from a bookmark or Return to the load
+    /// starting, the window stuck meanwhile. Sharing one lets WebKit have
+    /// the next process ready: 9 to 10 ms, for the same memory and the same
+    /// number of processes (measured with ./bench bookmark URL new, 24 Sep 2026).
+    static let pool = WKProcessPool()
 
     /// `space`: the space the tab belongs to, when it is not the one on
     /// screen — a parked row made ahead of time (see Spaces.swift).
@@ -29,6 +36,7 @@ enum Web {
         // cookies, its own sign-ins, and nothing left behind when it closes.
         // With spaces on, each space's tabs share a store of that space's.
         config.websiteDataStore = shy ? .nonPersistent() : MainActor.assumeIsolated { Spaces.store(for: space ?? Spaces.current) }
+        config.processPool = Web.pool
         // Chrome extensions see every page but a private one, unless Settings
         // › Extensions says they may. The controller has to be there when the
         // view is made; it can't be added after.
