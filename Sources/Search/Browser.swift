@@ -631,7 +631,9 @@ final class Browser: NSObject, ObservableObject {
     private var remembering = false
     /// Spaces (see Spaces.swift): every one, the one on screen, and the
     /// rows of tabs of the others.
-    @Published var spaces = Spaces.read()
+    @Published var spaces = Spaces.read() {
+        didSet { Spaces.sharing = Set(spaces.filter { $0.sharesSignIns == true }.map(\.id)) }
+    }
     @Published var spaceID = Space.firstID
     var parked: [UUID: Parked] = [:]
     /// How far the column's rows have followed two fingers sideways, and
@@ -726,6 +728,7 @@ final class Browser: NSObject, ObservableObject {
 
         // What a deleted space left behind, if WebKit wouldn't let it go then.
         Spaces.sweep()
+        Spaces.sharing = Set(spaces.filter { $0.sharesSignIns == true }.map(\.id))
         // The space you were in, when there are spaces (see Spaces.swift).
         if prefs.usesSpaces, let last = Store.settings.string(forKey: "space.current").flatMap(UUID.init),
            spaces.contains(where: { $0.id == last }) {

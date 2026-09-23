@@ -655,7 +655,7 @@ final class Bench {
             // space keeps apart. Test runs only: it moves your tabs about.
             guard Store.testing else { answer(["error": "space only works on a --test run"]); return }
             switch request["action"] as? String ?? "" {
-            case "new": browser.addSpace(named: request["name"] as? String ?? "Test")
+            case "new": browser.addSpace(named: request["name"] as? String ?? "Test", sharesSignIns: request["fresh"] as? Bool != true)
             case "go": browser.switchSpace(index: (request["index"] as? Int ?? 1) - 1)
             case "delete": browser.deleteSpace(browser.spaceID)
             case "swipe":
@@ -682,7 +682,7 @@ final class Bench {
             let out: [String: Any] = [
                 "on": browser.prefs.usesSpaces,
                 "current": browser.space.name,
-                "spaces": browser.spaces.map { ["name": $0.name, "id": $0.id.uuidString, "downloads": $0.downloads ?? ""] },
+                "spaces": browser.spaces.map { ["name": $0.name, "id": $0.id.uuidString, "downloads": $0.downloads ?? "", "shared": $0.sharesSignIns == true] },
                 "parked": browser.parked.map { [$0.key.uuidString: $0.value.tabs.count] },
                 "tabs": browser.tabs.count,
                 "making": browser.makingSpace,

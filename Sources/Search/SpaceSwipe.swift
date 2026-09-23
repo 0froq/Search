@@ -141,21 +141,38 @@ struct NewSpaceCard: View {
     @ObservedObject var browser: Browser
     @State private var name = ""
     @State private var icon = "briefcase"
+    @State private var choosing = false
+    /// Signed in where the other spaces are, or starting afresh.
+    @State private var shared = true
+    @State private var hovering = false
     @FocusState private var typing: Bool
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(Palette.ink)
-                .frame(width: 30, height: 26)
-                .id(icon)
-                .transition(.opacity)
+            // The space's icon, and a click on it for the others: they
+            // aren't all laid out on the card.
+            Button { choosing = true } label: {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(Palette.ink)
+                    .frame(width: 44, height: 40)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(hovering || choosing ? Palette.hover : .clear)
+                    )
+                    .contentShape(Rectangle())
+                    .id(icon)
+                    .transition(.opacity)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("Choose an icon")
+            .popover(isPresented: $choosing, arrowEdge: .bottom) { icons }
             VStack(spacing: 4) {
                 Text("New space")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text("Its own tabs, cookies and sign-ins.")
+                Text("Its own tabs.")
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
                     .multilineTextAlignment(.center)
@@ -168,21 +185,15 @@ struct NewSpaceCard: View {
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Palette.wash))
                 .focused($typing)
                 .onSubmit(create)
-            // The icons, a few to a row, the chosen one on a grey of its own.
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(26), spacing: 3), count: 6), spacing: 3) {
-                ForEach(Array(zip(Spaces.icons, Spaces.iconNames)), id: \.0) { symbol, name in
-                    Image(systemName: symbol)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(symbol == icon ? Palette.ink : Palette.muted)
-                        .frame(width: 26, height: 26)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(symbol == icon ? Palette.wash : .clear)
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture { icon = symbol }
-                        .help(name)
-                }
+            // Most people want Google and the rest to know them here too;
+            // some want a clean slate.
+            VStack(spacing: 6) {
+                Segmented(options: [(true, "Same sign-ins"), (false, "Signed out")], selection: $shared, wide: true)
+                Text(shared ? "Signed in wherever your other spaces are." : "Its own cookies and sign-ins, starting from none.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Palette.muted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
                 Pill("Cancel") { cancel() }
@@ -198,10 +209,35 @@ struct NewSpaceCard: View {
         .onExitCommand(perform: cancel)
     }
 
+    /// Every icon, a few to a row, the chosen one on a grey of its own;
+    /// picking one puts the list away.
+    private var icons: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(28), spacing: 4), count: 6), spacing: 4) {
+            ForEach(Array(zip(Spaces.icons, Spaces.iconNames)), id: \.0) { symbol, name in
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(symbol == icon ? Palette.ink : Palette.muted)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(symbol == icon ? Palette.wash : .clear)
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(Motion.quick) { icon = symbol }
+                        choosing = false
+                        typing = true
+                    }
+                    .help(name)
+            }
+        }
+        .padding(10)
+    }
+
     private func create() {
         let named = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !named.isEmpty else { typing = true; return }
-        browser.addSpace(named: named, icon: icon)
+        browser.addSpace(named: named, icon: icon, sharesSignIns: shared)
     }
 
     private func cancel() {
