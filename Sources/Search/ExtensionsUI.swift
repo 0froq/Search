@@ -115,6 +115,13 @@ struct ExtensionsPage: View {
                 }
                 Spacer(minLength: 8)
                 if hovering {
+                    if context?.overrideNewTabPageURL != nil {
+                        let on = Store.settings.object(forKey: "extensions.newtab.\(item.id)") as? Bool == true
+                        Quick(on ? "Stop in New Tabs" : "Show in New Tabs") {
+                            Store.settings.set(!on, forKey: "extensions.newtab.\(item.id)")
+                            extensions.objectWillChange.send()
+                        }
+                    }
                     if item.source != nil || !item.fromStore {
                         Quick("Reload") { extensions.reload(item.id) }
                     }
@@ -140,6 +147,9 @@ struct ExtensionsPage: View {
         private func detail(_ context: WKWebExtensionContext?) -> String {
             var parts = ["Version \(item.version)", item.fromStore ? "Chrome Web Store" : folder]
             if item.enabled, context == nil { parts.append("couldn't start") }
+            if context?.overrideNewTabPageURL != nil, Store.settings.object(forKey: "extensions.newtab.\(item.id)") as? Bool == true {
+                parts.append("shows in new tabs")
+            }
             if let errors = context?.errors, !errors.isEmpty { parts.append("\(errors.count) warning\(errors.count == 1 ? "" : "s")") }
             return parts.joined(separator: " · ")
         }

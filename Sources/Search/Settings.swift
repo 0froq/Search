@@ -209,6 +209,14 @@ struct SettingsPanel: View {
 
     // MARK: - passwords
 
+    /// Says so when a password manager extension has taken the saving over.
+    private var savingDetail: String {
+        if #available(macOS 15.4, *), let name = Extensions.shared.passwordSavingTakenBy {
+            return "\(name) does the saving — it asked Search not to offer"
+        }
+        return "Asked once per site, never again for a site you refuse"
+    }
+
     private var passwords: some View {
         VStack(alignment: .leading, spacing: 18) {
             Card {
@@ -219,7 +227,7 @@ struct SettingsPanel: View {
                     }
                 }
                 Rule()
-                Line("Offer to save passwords", "Asked once per site, never again for a site you refuse") {
+                Line("Offer to save passwords", savingDetail) {
                     Switch(on: $prefs.savesPasswords)
                 }
                 Rule()

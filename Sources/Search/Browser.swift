@@ -597,6 +597,9 @@ final class Browser: NSObject, ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.7, execute: work)
     }
 
+    /// The names extensions asked their downloads to be saved under.
+    var namedDownloads: [URL: String] = [:]
+
     /// Tabs you closed, newest last, so ⌘⇧T can put them back where they were
     /// and the History menu can offer them by name.
     @Published private(set) var ghosts: [Ghost] = []
@@ -862,6 +865,13 @@ final class Browser: NSObject, ObservableObject {
     /// ⌘T. On a tab that is already blank this just puts the cursor back in the
     /// field — otherwise holding ⌘T leaves a row of identical empty tabs.
     func newTab() {
+        // An extension's new tab page, if one asked and you said yes.
+        if #available(macOS 15.4, *), let page = Extensions.shared.newTabPage {
+            open(page, foreground: true)
+            summoning = false
+            rememberSession()
+            return
+        }
         if let active, active.isBlank {
             summoning = false
             editing = true
@@ -878,6 +888,20 @@ final class Browser: NSObject, ObservableObject {
         editing = false
         focusRequest += 1
         rememberSession()
+        if #available(macOS 15.4, *) { Extensions.shared.offerNewTabPage(into: tab) }
+    }
+
+    /// A blank tab given an extension's new tab page: the page needs a view
+    /// built from that extension's configuration, so it is a new tab in the
+    /// blank one's place.
+    func replaceBlank(_ tab: Tab, with url: URL) {
+        guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        let url = Browser.page(url)
+        let page = Tab(configuration: Browser.extensionConfiguration(for: url))
+        prepare(page)
+        tabs[index] = page
+        page.go(to: url)
+        if activeID == tab.id { activeID = page.id; editing = false }
     }
 
     func select(_ tab: Tab) {
@@ -1049,6 +1073,7 @@ final class Browser: NSObject, ObservableObject {
     func open(_ url: URL, foreground: Bool, atEnd: Bool = false) -> Tab {
         // An extension's own page is served only to a view built from that
         // extension's configuration.
+        let url = Browser.page(url)
         let tab = Tab(configuration: Browser.extensionConfiguration(for: url))
         prepare(tab)
         let here = atEnd ? nil : tabs.firstIndex { $0.id == activeID }
@@ -1063,9 +1088,18 @@ final class Browser: NSObject, ObservableObject {
         return tab
     }
 
-    /// The configuration for a webkit-extension:// page, or nil for anything else.
+    /// An address from before extensions moved to chrome-extension://, as
+    /// it is now; any other, as it is.
+    static func page(_ url: URL) -> URL {
+        if #available(macOS 15.4, *) { return Extensions.current(url) }
+        return url
+    }
+
+    /// The configuration for an extension's page, or nil for anything else.
     static func extensionConfiguration(for url: URL) -> WKWebViewConfiguration? {
-        guard url.scheme == "webkit-extension", #available(macOS 15.4, *) else { return nil }
+        guard #available(macOS 15.4, *) else { return nil }
+        let url = Extensions.current(url)
+        guard url.scheme == Extensions.scheme else { return nil }
         return Extensions.shared.controller.extensionContext(for: url)?.webViewConfiguration
     }
 
@@ -1073,6 +1107,7 @@ final class Browser: NSObject, ObservableObject {
     /// looking at, and marked as not yours.
     @discardableResult
     func benchOpen(_ url: URL) -> Tab {
+        let url = Browser.page(url)
         let tab = Tab(bench: true, configuration: Browser.extensionConfiguration(for: url))
         prepare(tab)
         tabs.append(tab)
@@ -1249,6 +1284,9 @@ final class Browser: NSObject, ObservableObject {
             guard let self, prefs.savesPasswords, !password.isEmpty, !tab.shy,
                   !Vault.isNever(host)
             else { return }
+            // A password manager extension that asked Chrome's way to do the
+            // saving itself.
+            if #available(macOS 15.4, *), Extensions.shared.passwordSavingTakenBy != nil { return }
             let known = Vault.logins(for: host)
             // Nothing to ask about one that is already known.
             if let same = known.first(where: { $0.user == user && $0.password == password }) {
@@ -1563,9 +1601,9 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
             Shield.shared.tune(webView.configuration.userContentController, for: host)
         }
 
-        // webkit-extension: an extension's own pages — options, a side
+        // chrome-extension: an extension's own pages — options, a side
         // panel, a tab it opened. WebKit serves them; nothing else here does.
-        if ["http", "https", "file", "about", "data", "blob", "webkit-extension"].contains(scheme) {
+        if ["http", "https", "file", "about", "data", "blob", "chrome-extension", "webkit-extension"].contains(scheme) {
             decisionHandler(.allow)
         } else {
             NSWorkspace.shared.open(url)
@@ -1765,7 +1803,8 @@ extension Browser: WKDownloadDelegate {
         suggestedFilename: String,
         completionHandler: @escaping (URL?) -> Void
     ) {
-        let name = suggestedFilename.isEmpty ? "download" : suggestedFilename
+        let asked = response.url.flatMap { namedDownloads.removeValue(forKey: $0) }
+        let name = asked ?? (suggestedFilename.isEmpty ? "download" : suggestedFilename)
 
         guard !prefs.asksWhereToSave else {
             let panel = NSSavePanel()

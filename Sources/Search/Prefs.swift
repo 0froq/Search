@@ -139,8 +139,15 @@ final class Preferences: ObservableObject {
             passkeys = store.object(forKey: "passkeys") as? Bool ?? entitled
         }
         store.set(entitled, forKey: "passkeys.entitled")
-        downloads = (store.string(forKey: "downloads")).map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        // A test run downloads into its own folder: ~/Downloads would have
+        // macOS stop it to ask for access, with a dialog on the screen of
+        // whoever is working beside it.
+        let testDownloads = Store.folder.appendingPathComponent("Downloads", isDirectory: true)
+        if Store.testing { try? FileManager.default.createDirectory(at: testDownloads, withIntermediateDirectories: true) }
+        downloads = Store.testing
+            ? testDownloads
+            : (store.string(forKey: "downloads")).map { URL(fileURLWithPath: $0) }
+                ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         asksWhereToSave = store.bool(forKey: "downloads.ask")
         savesPasswords = store.object(forKey: "passwords.save") as? Bool ?? true
         fillsPasswords = store.object(forKey: "passwords.fill") as? Bool ?? true

@@ -37,6 +37,7 @@ enum Web {
         // did nothing at all: the page asks, and WebKit refuses without a word.
         config.preferences.isElementFullscreenEnabled = true
         config.mediaTypesRequiringUserActionForPlayback = .audio
+        if Store.testing { config.preferences.inactiveSchedulingPolicy = .none }
         return config
     }
 }

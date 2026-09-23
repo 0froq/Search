@@ -21,6 +21,7 @@ import WebKit
 @MainActor
 final class Bench {
     static let shared = Bench()
+    private var awake: NSObjectProtocol?
 
     private weak var browser: Browser?
     private var listener: Int32 = -1
@@ -39,6 +40,10 @@ final class Bench {
     func start(for browser: Browser) {
         guard !running else { return }
         self.browser = browser
+        // Nor App Nap, which a test run behind other windows falls into.
+        if Store.testing, awake == nil {
+            awake = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Bench")
+        }
         let path = Bench.socket.path
         try? FileManager.default.createDirectory(
             at: Bench.socket.deletingLastPathComponent(), withIntermediateDirectories: true
@@ -187,7 +192,17 @@ final class Bench {
 
     // MARK: - the commands
 
-    private func handle(_ request: [String: Any], _ answer: @escaping ([String: Any]) -> Void) {
+    private func handle(_ request: [String: Any], _ given: @escaping ([String: Any]) -> Void) {
+        // One answer, and always one: a page that never replies to a script
+        // would otherwise hold the bench — every later command waits behind it.
+        var answered = false
+        let answer: ([String: Any]) -> Void = { reply in
+            guard !answered else { return }
+            answered = true
+            given(reply)
+        }
+        let patience = (request["do"] as? String) == "wait" ? (request["seconds"] as? Double ?? 30) + 5 : 25
+        DispatchQueue.main.asyncAfter(deadline: .now() + patience) { answer(["error": "no answer within \(Int(patience)) s"]) }
         guard let browser else {
             answer(["error": "no browser"])
             return
@@ -346,7 +361,7 @@ final class Bench {
             if #available(macOS 15.4, *), let on = request["extensions"] as? Bool { Extensions.shared.menuOpen = on }
             answer(["ok": true])
 
-        case "extensions", "ext-add", "ext-folder", "ext-press", "ext-remove", "ext-reload", "ext-page", "ext-popup", "ext-menu", "ext-pin":
+        case "extensions", "ext-add", "ext-folder", "ext-press", "ext-remove", "ext-reload", "ext-page", "ext-popup", "ext-menu", "ext-pin", "ext-shot", "ext-answer":
             guard #available(macOS 15.4, *) else {
                 answer(["error": "extensions need macOS 15.4"])
                 return
@@ -375,7 +390,11 @@ final class Bench {
                     "id": item.id, "name": item.name, "version": item.version, "enabled": item.enabled,
                     "loaded": context != nil,
                     "base": context?.baseURL.absoluteString ?? "",
-                    "errors": (context?.errors ?? []).map(\.localizedDescription),
+                    "errors": (context?.errors ?? []).map { error in
+                        let e = error as NSError
+                        let under = (e.userInfo[NSUnderlyingErrorKey] as? NSError).map { " ← \($0.localizedDescription) \($0.userInfo)" } ?? ""
+                        return e.localizedDescription + under + (e.userInfo.isEmpty ? "" : " \(e.userInfo.filter { $0.key != NSLocalizedDescriptionKey && $0.key != NSUnderlyingErrorKey })")
+                    },
                     "reported": extensions.errors[item.id] ?? [],
                     "action": action?.label ?? "", "badge": action?.badgeText ?? "",
                     "popup": action?.presentsPopup ?? false,
@@ -394,6 +413,22 @@ final class Bench {
             guard let id = request["id"] as? String else { answer(["error": "ext-press needs an id"]); return }
             extensions.press(id)
             answer(["pressed": true])
+        case "ext-answer":
+            // In a test run: answer every extension's question yes or no
+            // without asking, or go back to asking.
+            guard Store.testing else { answer(["error": "only in a test run"]); return }
+            switch request["answer"] as? String {
+            case "yes": extensions.answerForTests = true
+            case "no": extensions.answerForTests = false
+            default: extensions.answerForTests = nil
+            }
+            answer(["answer": request["answer"] as? String ?? "ask", "asked": extensions.asked])
+        case "ext-shot":
+            // A picture of the extension's popup, while it is open.
+            guard let id = request["id"] as? String, ExtensionPopup.shared.extensionID == id,
+                  let web = ExtensionPopup.shared.view, let path = request["path"] as? String
+            else { answer(["error": "no popup open for that extension"]); return }
+            shoot(web, to: URL(fileURLWithPath: path), width: nil, answer)
         case "ext-menu":
             // The list behind the puzzle button, as a picture.
             guard let path = request["path"] as? String, let data = extensionMenuPicture()?.representation(using: .png, properties: [:]) else {
@@ -526,10 +561,14 @@ final class Bench {
     }
 
     private func shoot(_ tab: Tab, to file: URL, width: Double?, _ answer: @escaping ([String: Any]) -> Void) {
+        shoot(tab.web, to: file, width: width, answer)
+    }
+
+    private func shoot(_ web: WKWebView, to file: URL, width: Double?, _ answer: @escaping ([String: Any]) -> Void) {
         let shot = WKSnapshotConfiguration()
         shot.afterScreenUpdates = true
         if let width { shot.snapshotWidth = NSNumber(value: width) }
-        tab.web.takeSnapshot(with: shot) { image, error in
+        web.takeSnapshot(with: shot) { image, error in
             MainActor.assumeIsolated {
                 guard let image, let tiff = image.tiffRepresentation,
                       let rep = NSBitmapImageRep(data: tiff),

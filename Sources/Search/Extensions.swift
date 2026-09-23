@@ -75,16 +75,48 @@ final class Extensions: NSObject, ObservableObject {
     var anchors: [String: WeakView] = [:]
 
     static var folder: URL { Store.folder.appendingPathComponent("Extensions", isDirectory: true) }
+
+    /// An extension's pages are served from chrome-extension://<id>/, the
+    /// address they have in Chrome — Search uses the same ids. Servers allow
+    /// their own extension in by that origin (Raindrop's refuses any other),
+    /// and sites look for an extension at it. WebKit's own
+    /// webkit-extension:// is what Search used before; addresses kept from
+    /// then are read as the new ones.
+    static let scheme = "chrome-extension"
+    static let formerScheme = "webkit-extension"
+
+    static func current(_ url: URL) -> URL {
+        guard url.scheme == formerScheme, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        parts.scheme = scheme
+        return parts.url ?? url
+    }
     private static var list: URL { folder.appendingPathComponent("installed.json") }
     static func folder(for id: String) -> URL { folder.appendingPathComponent(id, isDirectory: true) }
 
     private override init() {
+        WKWebExtension.MatchPattern.registerCustomURLScheme(Extensions.scheme)
         // A test run keeps its extensions' storage apart, as it does its
         // cookies and passwords.
         let configuration: WKWebExtensionController.Configuration = Store.testing
             ? .init(identifier: UUID(uuidString: "5E4C0000-0000-4000-8000-000000000002")!)
             : .default()
         configuration.defaultWebsiteDataStore = Store.websites
+        let views = configuration.webViewConfiguration ?? WKWebViewConfiguration()
+        // Its own configuration starts with WebKit's default store; an
+        // extension's pages keep what they store where the browser does —
+        // and a test run's apart from the real one's.
+        views.websiteDataStore = Store.websites
+        // An extension's own pages and worker say Chrome, because Chrome is
+        // what they were written for: plenty read navigator.userAgent to
+        // pick a code path, a download, a welcome page — and find nothing
+        // they know in Safari's. Web pages keep Safari's, which is what
+        // gets them to serve their modern selves.
+        views.applicationNameForUserAgent = "Chrome/\(Crx.chromeVersion) Safari/537.36"
+        // A test run sits behind other windows, where WebKit slows its views
+        // to a crawl and messages between an extension's popup and its
+        // worker stop arriving. Not what anyone is testing.
+        if Store.testing { views.preferences.inactiveSchedulingPolicy = .none }
+        configuration.webViewConfiguration = views
         controller = WKWebExtensionController(configuration: configuration)
         super.init()
         controller.delegate = self
@@ -186,7 +218,7 @@ final class Extensions: NSObject, ObservableObject {
             // The same origin every launch. WebKit picks a fresh one
             // otherwise, and everything an extension keeps in its own pages
             // — localStorage, IndexedDB — is filed under its origin.
-            if let stable = URL(string: "webkit-extension://\(item.id)/") { context.baseURL = stable }
+            if let stable = URL(string: "\(Extensions.scheme)://\(item.id)/") { context.baseURL = stable }
             context.isInspectable = true
             // Installing was the consent: everything it asked for then is
             // granted each time it loads. Optional ones are asked for when
@@ -199,6 +231,8 @@ final class Extensions: NSObject, ObservableObject {
                 context.setPermissionStatus(.grantedExplicitly, for: pattern)
             }
             try controller.load(context)
+            if contexts[item.id] == nil, loadsThisRun.contains(item.id) { loadedBefore.insert(item.id) }
+            loadsThisRun.insert(item.id)
             contexts[item.id] = context
             actionsChanged += 1
             return true
@@ -324,6 +358,29 @@ final class Extensions: NSObject, ObservableObject {
         }
     }
 
+    /// An extension whose worker won't start again: unloaded and loaded,
+    /// as a relaunch would — at most once a minute, so one that can never
+    /// start doesn't go round in circles.
+    private var revived: [String: Date] = [:]
+    /// Loaded at least once since the browser started, and loaded again.
+    private var loadsThisRun: Set<String> = []
+    private(set) var loadedBefore: Set<String> = []
+
+    func revive(_ id: String, because reason: String) {
+        guard let item = installed.first(where: { $0.id == id }), item.enabled,
+              Date().timeIntervalSince(revived[id] ?? .distantPast) > 60 else { return }
+        revived[id] = Date()
+        noteError("restarted the extension: \(reason)", for: id)
+        // Its popup goes with it; it is opened again once the extension is back.
+        let popup = ExtensionPopup.shared.extensionID == id ? ExtensionPopup.shared.view?.url : nil
+        let anchor = anchors[id]?.view?.window != nil ? anchors[id]?.view : anchors[Extensions.menuAnchor]?.view
+        unload(id)
+        Task {
+            guard await load(item), let popup, let context = contexts[id] else { return }
+            ExtensionPopup.shared.show(popup, for: context, from: anchor)
+        }
+    }
+
     func setPinned(_ id: String, _ on: Bool) {
         guard let index = installed.firstIndex(where: { $0.id == id }) else { return }
         installed[index].pinned = on
@@ -343,8 +400,9 @@ final class Extensions: NSObject, ObservableObject {
             throw error
         }
         let name = found.displayName ?? id
-        let wants = Extensions.describe(found)
-        guard !confirm || ask(install: name, wants: wants, icon: found.icon(for: CGSize(width: 64, height: 64))) else {
+        let wants = Extensions.describe(found, in: staged)
+        let accepted = confirm ? await ask(install: name, wants: wants, icon: found.icon(for: CGSize(width: 64, height: 64))) : true
+        guard accepted else {
             try? files.removeItem(at: staged)
             return
         }
@@ -368,9 +426,61 @@ final class Extensions: NSObject, ObservableObject {
     func remove(_ id: String) {
         unload(id)
         errors[id] = nil
+        Extensions.setSettings([:], for: id)
+        Store.settings.removeObject(forKey: "extensions.granted.\(id)")
+        loadsThisRun.remove(id)
+        loadedBefore.remove(id)
+        Store.settings.removeObject(forKey: "extensions.newtab.\(id)")
         installed.removeAll { $0.id == id }
         save()
         try? FileManager.default.removeItem(at: Extensions.folder(for: id))
+    }
+
+    // MARK: - new tab pages
+
+    /// The page an extension asks to show in new tabs, from the one added
+    /// last — once you've said yes to it. Nil while nobody asks, or you
+    /// said no.
+    var newTabPage: URL? {
+        guard let (id, url) = newTabCandidate else { return nil }
+        return Store.settings.object(forKey: "extensions.newtab.\(id)") as? Bool == true ? url : nil
+    }
+
+    private var newTabCandidate: (String, URL)? {
+        for item in installed.reversed() where item.enabled {
+            if let url = contexts[item.id]?.overrideNewTabPageURL { return (item.id, url) }
+        }
+        return nil
+    }
+
+    /// Chrome asks the first time an extension's page takes the place of
+    /// the new tab — an extension that did it quietly could be anything.
+    /// So does Search, and then shows the page in the tab just opened.
+    func offerNewTabPage(into tab: Tab) {
+        guard let (id, url) = newTabCandidate, Store.settings.object(forKey: "extensions.newtab.\(id)") == nil,
+              let name = installed.first(where: { $0.id == id })?.name else { return }
+        Task {
+            let yes = await ask("Show “\(name)” in new tabs?", detail: "It asked to replace the new tab page. You can change this later in Settings › Extensions.",
+                                icon: contexts[id]?.webExtension.icon(for: CGSize(width: 64, height: 64)), yes: "Keep It", no: "Don't Allow")
+            Store.settings.set(yes, forKey: "extensions.newtab.\(id)")
+            if yes, tab.isBlank, let browser { browser.replaceBlank(tab, with: url) }
+        }
+    }
+
+    /// What an extension set through chrome.privacy and chrome.proxy.
+    static func settings(for id: String) -> [String: Any] {
+        Store.settings.dictionary(forKey: "extensions.settings.\(id)") ?? [:]
+    }
+
+    static func setSettings(_ values: [String: Any], for id: String) {
+        if values.isEmpty { Store.settings.removeObject(forKey: "extensions.settings.\(id)") }
+        else { Store.settings.set(values, forKey: "extensions.settings.\(id)") }
+    }
+
+    /// The extension, on and running, that asked the browser not to offer to
+    /// save passwords — a password manager doing the saving itself.
+    var passwordSavingTakenBy: String? {
+        installed.first { $0.enabled && Extensions.settings(for: $0.id)["privacy.services.passwordSavingEnabled"] as? Bool == false }?.name
     }
 
     func setEnabled(_ id: String, _ on: Bool) {
@@ -428,7 +538,7 @@ final class Extensions: NSObject, ObservableObject {
             let found = try await WKWebExtension(resourceBaseURL: staged)
             let wants = Set(found.requestedPermissions.map(\.rawValue))
             if !wants.isSubset(of: Set(item.permissions)) {
-                guard ask(install: "An update to \(item.name)", wants: Extensions.describe(found), icon: found.icon(for: CGSize(width: 64, height: 64))) else {
+                guard await ask(install: "An update to \(item.name)", wants: Extensions.describe(found, in: staged), icon: found.icon(for: CGSize(width: 64, height: 64))) else {
                     try? FileManager.default.removeItem(at: staged)
                     return
                 }
@@ -453,14 +563,18 @@ final class Extensions: NSObject, ObservableObject {
         let manifest = context.webExtension.manifest
         let action = (manifest["action"] ?? manifest["browser_action"]) as? [String: Any]
         guard let path = action?["default_popup"] as? String, !path.isEmpty else { return nil }
-        return context.baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        // Relative to the extension, and keeping a query it may carry.
+        return URL(string: path, relativeTo: context.baseURL)?.absoluteURL
     }
 
     // MARK: - asking
 
     /// What an extension wants, in words.
-    static func describe(_ found: WKWebExtension) -> [String] {
+    static func describe(_ found: WKWebExtension, in folder: URL) -> [String] {
         var out: [String] = []
+        // Leaving out what Search itself added to the manifest.
+        let added = Set((try? JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent(".search-added")))) as? [String] ?? [])
+        let declared = Set(((try? JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("manifest.json")))) as? [String: Any])?["permissions"] as? [String] ?? [])
         let patterns = found.allRequestedMatchPatterns
         if patterns.contains(where: { $0.matchesAllHosts || $0.matchesAllURLs }) {
             out.append("Read and change everything on every website")
@@ -478,32 +592,75 @@ final class Extensions: NSObject, ObservableObject {
             .nativeMessaging: "Talk to apps on this Mac",
             .scripting: "Run scripts in pages",
         ]
-        for (permission, sentence) in words where found.requestedPermissions.contains(permission) {
+        for (permission, sentence) in words where found.requestedPermissions.contains(permission) && !added.contains(permission.rawValue) {
             out.append(sentence)
         }
+        // Chrome's own, which Search answers itself.
+        let ours: [(String, String)] = [
+            ("userScripts", "Run scripts you add to it on websites"), ("history", "Read and change your history"),
+            ("bookmarks", "Read and change your bookmarks"), ("downloads", "Manage your downloads"),
+            ("privacy", "Change your privacy settings"), ("browsingData", "Clear your browsing data"),
+            ("management", "See your other extensions"), ("notifications", "Show notifications"),
+        ]
+        for (name, sentence) in ours where declared.contains(name) { out.append(sentence) }
         return out
     }
 
-    private func ask(install name: String, wants: [String], icon: NSImage?) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "Add “\(name)” to Search?"
-        alert.informativeText = wants.isEmpty
-            ? "It doesn't ask for anything special."
-            : "It will be able to:\n• " + wants.joined(separator: "\n• ")
-        if let icon { alert.icon = icon }
-        alert.addButton(withTitle: "Add Extension")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+    private func ask(install name: String, wants: [String], icon: NSImage?) async -> Bool {
+        await ask(
+            "Add “\(name)” to Search?",
+            detail: wants.isEmpty ? "It doesn't ask for anything special." : "It will be able to:\n• " + wants.joined(separator: "\n• "),
+            icon: icon, yes: "Add Extension", no: "Cancel"
+        )
     }
 
-    private func ask(_ question: String, detail: String, context: WKWebExtensionContext) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "\(context.webExtension.displayName ?? "An extension") \(question)"
-        alert.informativeText = detail
-        if let icon = context.webExtension.icon(for: CGSize(width: 64, height: 64)) { alert.icon = icon }
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Don't Allow")
-        return alert.runModal() == .alertFirstButtonReturn
+    /// An extension asking, through permissions.request, for one of the
+    /// permissions Search answers itself.
+    func ask(more names: String, context: WKWebExtensionContext) async -> Bool {
+        await ask("asks for more access", detail: names, context: context)
+    }
+
+    private func ask(_ question: String, detail: String, context: WKWebExtensionContext) async -> Bool {
+        await ask(
+            "\(context.webExtension.displayName ?? "An extension") \(question)",
+            detail: detail, icon: context.webExtension.icon(for: CGSize(width: 64, height: 64)),
+            yes: "Allow", no: "Don't Allow"
+        )
+    }
+
+    /// The last question asked, so the next waits for its answer.
+    private var question: Task<Bool, Never>?
+    /// For the bench, in a test run only: answer every question this way
+    /// instead of asking. Nil asks.
+    var answerForTests: Bool?
+    /// What was asked, for the bench.
+    private(set) var asked: [String] = []
+
+    /// One question at a time, as a sheet on the browser's window. An alert
+    /// run modally would stop the whole browser — pages, downloads, every
+    /// other extension — for as long as it waits, and an extension can ask
+    /// when nobody is looking.
+    private func ask(_ title: String, detail: String, icon: NSImage?, yes: String, no: String) async -> Bool {
+        let before = question
+        let task = Task { @MainActor [weak self] () -> Bool in
+            _ = await before?.value
+            self?.asked.append(title)
+            if Store.testing, let answer = self?.answerForTests { return answer }
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = detail
+            if let icon { alert.icon = icon }
+            alert.addButton(withTitle: yes)
+            alert.addButton(withTitle: no)
+            guard let window = NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else {
+                return alert.runModal() == .alertFirstButtonReturn
+            }
+            return await withCheckedContinuation { done in
+                alert.beginSheetModal(for: window) { done.resume(returning: $0 == .alertFirstButtonReturn) }
+            }
+        }
+        question = task
+        return await task.value
     }
 
     // MARK: - the buttons
@@ -549,7 +706,25 @@ final class Extensions: NSObject, ObservableObject {
             ExtensionShims.openPanel(context, owner: self)
             return
         }
+        // A popup is opened here, straight away. Left to WebKit, it builds
+        // a popup of its own first, and closing that one in favour of
+        // Search's lost the new popup's first messages to its worker.
+        if context.action(for: activeAdapter)?.presentsPopup == true, let url = popupURL(for: context) {
+            let own = anchors[id]?.view
+            ExtensionPopup.shared.show(url, for: context, from: own?.window != nil ? own : anchors[Extensions.menuAnchor]?.view)
+            return
+        }
         context.performAction(for: activeAdapter)
+    }
+
+    /// The page the button's popup is now: one the extension set for this
+    /// tab or for all of them, else its manifest's.
+    private func popupURL(for context: WKWebExtensionContext) -> URL? {
+        let set = ExtensionShims.popups[context.uniqueIdentifier] ?? [:]
+        let path = browser?.active.flatMap { set[$0.id.uuidString] } ?? set["*"]
+        guard let path else { return Extensions.popupURL(for: context) }
+        guard !path.isEmpty else { return nil }
+        return URL(string: path, relativeTo: context.baseURL)?.absoluteURL
     }
 
     /// A keystroke an extension registered for.
@@ -604,18 +779,24 @@ extension Extensions: WKWebExtensionControllerDelegate {
 
     func webExtensionController(_ controller: WKWebExtensionController, promptForPermissions permissions: Set<WKWebExtension.Permission>, in tab: (any WKWebExtensionTab)?, for extensionContext: WKWebExtensionContext) async -> (Set<WKWebExtension.Permission>, Date?) {
         let detail = permissions.map(\.rawValue).sorted().joined(separator: ", ")
-        return ask("asks for more access", detail: detail, context: extensionContext) ? (permissions, nil) : ([], nil)
+        return await ask("asks for more access", detail: detail, context: extensionContext) ? (permissions, nil) : ([], nil)
     }
 
     func webExtensionController(_ controller: WKWebExtensionController, promptForPermissionToAccess urls: Set<URL>, in tab: (any WKWebExtensionTab)?, for extensionContext: WKWebExtensionContext) async -> (Set<URL>, Date?) {
-        let hosts = Set(urls.compactMap { $0.host() }).sorted().joined(separator: ", ")
-        return ask("wants to read and change \(hosts)", detail: "Only on these sites, until you remove the extension.", context: extensionContext) ? (urls, nil) : ([], nil)
+        // WebKit asks this the way Safari does: whenever an extension reaches
+        // for a page it has no host permission for — listing tabs, running a
+        // script in one — often with nobody having touched anything. Chrome
+        // never asks there: the extension has the sites its manifest named,
+        // the page it was clicked on (activeTab), and the ones it asked for
+        // through permissions.request. So neither does Search.
+        asked.append("(refused) \(extensionContext.webExtension.displayName ?? "?") → \(Set(urls.compactMap { $0.host() }).sorted().joined(separator: ", "))")
+        return ([], nil)
     }
 
     func webExtensionController(_ controller: WKWebExtensionController, promptForPermissionMatchPatterns matchPatterns: Set<WKWebExtension.MatchPattern>, in tab: (any WKWebExtensionTab)?, for extensionContext: WKWebExtensionContext) async -> (Set<WKWebExtension.MatchPattern>, Date?) {
         let all = matchPatterns.contains { $0.matchesAllHosts || $0.matchesAllURLs }
         let what = all ? "every website" : matchPatterns.map(\.string).sorted().joined(separator: ", ")
-        return ask("wants to read and change \(what)", detail: "Until you remove the extension.", context: extensionContext) ? (matchPatterns, nil) : ([], nil)
+        return await ask("wants to read and change \(what)", detail: "Until you remove the extension.", context: extensionContext) ? (matchPatterns, nil) : ([], nil)
     }
 
     func webExtensionController(_ controller: WKWebExtensionController, didUpdate action: WKWebExtension.Action, forExtensionContext context: WKWebExtensionContext) {
