@@ -12,6 +12,10 @@ final class Links: NSObject, NSApplicationDelegate {
     private static var deliver: ((URL) -> Void)?
     /// Addresses that arrived first.
     private static var waiting: [URL] = []
+    /// The browser's window, once there is one.
+    static weak var window: NSWindow?
+    /// Whether the window has been asked for on a link's behalf (summon).
+    private static var summoned = false
     /// The session, written now rather than whenever its own debounce was
     /// going to get to it. ⌘Q, the red button and an update's relaunch all
     /// end the process the same way, and none of them owed the last 1.2
@@ -91,6 +95,13 @@ final class Links: NSObject, NSApplicationDelegate {
     static func hand(to browser: Browser) {
         deliver = { [weak browser] url in
             browser?.arrive(url)
+            // The window closed with the app still running: the link brings
+            // it back, rather than landing in a tab nobody can see.
+            if let window {
+                if !window.isVisible { window.makeKeyAndOrderFront(nil) }
+            } else {
+                _ = NSApp.delegate?.applicationOpenUntitledFile?(NSApp)
+            }
             NSApp.activate(ignoringOtherApps: true)
         }
         flush = { [weak browser] in browser?.flushSession() }
@@ -121,7 +132,26 @@ final class Links: NSObject, NSApplicationDelegate {
     }
 
     private static func take(_ url: URL) {
-        if let deliver { deliver(url) } else { waiting.append(url) }
+        if let deliver {
+            deliver(url)
+        } else {
+            waiting.append(url)
+            DispatchQueue.main.async { summon() }
+        }
+    }
+
+    /// A link that launches the app arrives as an Apple Event, taken above,
+    /// and SwiftUI — seeing a launch that came to open something rather than
+    /// a plain one — leaves its window for that event to open. It never sees
+    /// the event, so nothing opened it: every link clicked in another app
+    /// while Search was closed launched it with no window and the page
+    /// nowhere. SwiftUI's delegate is asked instead for what a plain launch
+    /// gets, its window; a single window, so asking twice can't make two.
+    @MainActor
+    private static func summon() {
+        guard deliver == nil, window == nil, !summoned else { return }
+        summoned = true
+        _ = NSApp.delegate?.applicationOpenUntitledFile?(NSApp)
     }
 
     /// ⌘⇧F, the Help menu, and the About page all come here: a draft, in

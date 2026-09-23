@@ -579,6 +579,7 @@ struct ContentView: View {
     }
 
     private func dress(_ window: NSWindow) {
+        Links.window = window
         // Light or dark is the app's to say (Settings › Appearance); the
         // window only has to be the ground colour that goes with it.
         window.titlebarAppearsTransparent = true
