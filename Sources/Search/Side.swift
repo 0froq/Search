@@ -76,6 +76,8 @@ struct SideBar: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
+            // Clear of the foot, which sits over the column's bottom edge.
+            .padding(.bottom, SideBar.footHeight)
 
             VStack {
                 Spacer()
@@ -180,8 +182,27 @@ struct SideBar: View {
                         pinned
                             .padding(.bottom, 10)
                     }
-                    loose
-                    newTab
+                    // A row too long for the window scrolls between the pins
+                    // and the foot, rather than running under the lights at one
+                    // end and the foot at the other. While it fits it stays a
+                    // plain stack, and the space under it is still the
+                    // window's to be dragged by. Inside the page: the swipe
+                    // between spaces moves the page, scroll and all.
+                    ViewThatFits(in: .vertical) {
+                        rows
+                        ScrollViewReader { proxy in
+                            ScrollView(.vertical) { rows }
+                                // The tab you go to is the tab you see — ⌘1–⌘9,
+                                // ⇧⌘], a link opening beside the one on screen.
+                                .onChange(of: browser.activeID) { _, id in
+                                    guard let id else { return }
+                                    withAnimation(Motion.glide) { proxy.scrollTo(id) }
+                                }
+                                .onAppear {
+                                    if let id = browser.activeID { proxy.scrollTo(id, anchor: .center) }
+                                }
+                        }
+                    }
                 }
             } else {
                 preview(browser.parked[browser.spaces[index].id] ?? Parked(tabs: [], active: nil), pill: pill)
@@ -422,6 +443,17 @@ struct SideBar: View {
                 }
             }
     }
+
+    /// The loose tabs and the row that makes another, which scroll as one.
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            loose
+            newTab
+        }
+    }
+
+    /// The foot's door and its margin beneath.
+    private static let footHeight: CGFloat = 26 + 10
 
     private var newTab: some View {
         Quiet(icon: "plus", title: "New tab", height: SideBar.row) { browser.newTab() }
