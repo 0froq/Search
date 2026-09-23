@@ -8,6 +8,7 @@
     ./bench sleep ID                   put a tab to sleep now, or say what keeps it awake
     ./bench select ID                  bring a tab to the front — --test runs only
     ./bench resize W H [STEPS]         take the window to W×H in steps, like a drag — --test runs only
+    ./bench key ID TEXT                press keys on a tab as real key events — --test runs only
     ./bench text ID                    the page's text
     ./bench eval ID JS                 run JavaScript, print what it returns
     ./bench click ID SELECTOR
@@ -143,6 +144,9 @@ def main(argv):
         if not args: sys.exit("usage: bench ext-page ID [PATH]")
         request["id"] = args[0]
         request["path"] = args[1] if len(args) > 1 else ""
+    elif verb == "key":
+        if len(args) != 2: sys.exit("usage: bench key ID TEXT")
+        request["id"], request["text"] = args
     elif verb == "resize":
         if len(args) not in (2, 3): sys.exit("usage: bench resize WIDTH HEIGHT [STEPS]")
         request["width"], request["height"] = float(args[0]), float(args[1])

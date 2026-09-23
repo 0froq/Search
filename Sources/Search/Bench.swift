@@ -35,6 +35,17 @@ final class Bench {
     /// True while something is listening.
     private(set) var running = false
 
+    /// The key code of a letter on a US keyboard, which is what WebKit reads
+    /// alongside the characters; anything else goes as the space bar's.
+    static func keyCode(for character: Character) -> UInt16 {
+        let codes: [Character: UInt16] = [
+            "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
+            "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32,
+            "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
+        ]
+        return codes[Character(character.lowercased())] ?? 49
+    }
+
     /// Where the traffic lights are: each one's left edge and its centre's
     /// height from the top, in the window's points.
     static func lights(of window: NSWindow) -> [[Int]] {
@@ -355,7 +366,44 @@ final class Bench {
                 ]
             }
             if let window = Links.window { out["lights"] = Bench.lights(of: window) }
+            out["keysQuieted"] = PageView.quieted
             answer(out)
+
+        case "key":
+            // Keys pressed on a tab, as real key events handed to its view —
+            // for what the page does with them, and what comes back unused.
+            // Only on a SEARCH_PROBE run: it types into a page.
+            guard Store.testing else { answer(["error": "key only works on a --test run — it would type into your page"]); return }
+            guard let tab = find(request, in: browser), let text = request["text"] as? String else { answer(missing(request)); return }
+            house(tab)
+            let view = tab.web
+            view.window?.makeFirstResponder(view)
+            let before = PageView.quieted
+            // What WebKit sends back through the app because the page didn't
+            // use it: a key press seen here again after it was handed over.
+            var pressed: [NSEvent] = []
+            var resent = 0
+            let watch = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if pressed.contains(where: { PageView.same($0, event) }) { resent += 1 }
+                return event
+            }
+            for character in text {
+                let chars = String(character)
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    guard let event = NSEvent.keyEvent(
+                        with: type, location: .zero, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: view.window?.windowNumber ?? 0, context: nil,
+                        characters: chars, charactersIgnoringModifiers: chars,
+                        isARepeat: false, keyCode: Bench.keyCode(for: character)
+                    ) else { continue }
+                    if type == .keyDown { pressed.append(event); view.keyDown(with: event) } else { view.keyUp(with: event) }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if let watch { NSEvent.removeMonitor(watch) }
+                answer(["typed": text, "sentBackUnused": resent, "quieted": PageView.quieted - before])
+            }
 
         case "resize":
             // The window taken to another size in steps, a frame apart, the
