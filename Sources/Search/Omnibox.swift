@@ -17,7 +17,6 @@ struct Omnibox: View {
 
     @State private var shake: CGFloat = 0
     @State private var refused = false
-    @State private var breathing = false
 
     var body: some View {
         ZStack {
@@ -68,11 +67,7 @@ struct Omnibox: View {
                     // the only thing on an empty tab, and a thing that never
                     // moves at all reads as a picture of an app rather than
                     // an app.
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .fill(Palette.ink.opacity(0.05))
-                        .blur(radius: 26)
-                        .scaleEffect(breathing ? 1.03 : 0.97)
-                        .opacity(breathing ? 1 : 0.65)
+                    Breath()
 
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(Palette.ground)
@@ -88,11 +83,6 @@ struct Omnibox: View {
             )
             .shadow(color: .black.opacity(0.06), radius: 24, y: 8)
             .modifier(Shake(travel: shake))
-            .onAppear {
-                withAnimation(.easeInOut(duration: 2.6).repeatForever(autoreverses: true)) {
-                    breathing = true
-                }
-            }
             .onChange(of: browser.refusals) { _, _ in
                 shake = 0
                 refused = true
@@ -180,6 +170,68 @@ struct Omnibox: View {
             }
             .onHover { hovering = $0 }
             .animation(Motion.quick, value: hovering)
+        }
+    }
+}
+
+/// The breath under the field: the same blurred shape, drawn once, and
+/// moved by Core Animation. Animated by SwiftUI, it was drawn again on the
+/// main thread every frame for as long as an empty tab was showing — 18% of
+/// a core with the window doing nothing (24 Sep 2026). Core Animation plays
+/// it in the render server instead, and the app does nothing at all.
+private struct Breath: NSViewRepresentable {
+    /// Room round the shape for its blur, which spreads well past it.
+    private static let spill: CGFloat = 80
+
+    func makeNSView(context: Context) -> NSView { Lung() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class Lung: NSView {
+        private let glow: NSView = NSHostingView(rootView:
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(Palette.ink.opacity(0.05))
+                .blur(radius: 26)
+                .padding(Breath.spill)
+        )
+        private var breathed: CGSize = .zero
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            addSubview(glow)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func layout() {
+            super.layout()
+            glow.frame = bounds.insetBy(dx: -Breath.spill, dy: -Breath.spill)
+            guard bounds.size != breathed, bounds.width > 0, let layer = glow.layer else { return }
+            breathed = bounds.size
+            // From 0.97 to 1.03 about the middle, from 0.65 to full, 2.6 s
+            // each way, for as long as the field is there.
+            func scaled(_ factor: CGFloat) -> CATransform3D {
+                let middle = CGPoint(x: glow.bounds.midX, y: glow.bounds.midY)
+                var t = CATransform3DMakeTranslation(middle.x, middle.y, 0)
+                t = CATransform3DScale(t, factor, factor, 1)
+                return CATransform3DTranslate(t, -middle.x, -middle.y, 0)
+            }
+            let size = CABasicAnimation(keyPath: "transform")
+            size.fromValue = scaled(0.97)
+            size.toValue = scaled(1.03)
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0.65
+            fade.toValue = 1.0
+            let both = CAAnimationGroup()
+            both.animations = [size, fade]
+            both.duration = 2.6
+            both.autoreverses = true
+            both.repeatCount = .infinity
+            both.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.add(both, forKey: "breath")
         }
     }
 }
