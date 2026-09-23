@@ -35,6 +35,16 @@ final class Bench {
     /// True while something is listening.
     private(set) var running = false
 
+    /// Where the traffic lights are: each one's left edge and its centre's
+    /// height from the top, in the window's points.
+    static func lights(of window: NSWindow) -> [[Int]] {
+        [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].compactMap { type in
+            guard let button = window.standardWindowButton(type) else { return nil }
+            let frame = button.convert(button.bounds, to: nil)
+            return [Int(frame.minX.rounded()), Int((window.frame.height - frame.midY).rounded())]
+        }
+    }
+
     // MARK: - starting and stopping
 
     func start(for browser: Browser) {
@@ -344,7 +354,38 @@ final class Bench {
                     "frame": [Int(window.frame.minX), Int(window.frame.minY), Int(window.frame.width), Int(window.frame.height)],
                 ]
             }
+            if let window = Links.window { out["lights"] = Bench.lights(of: window) }
             answer(out)
+
+        case "resize":
+            // The window taken to another size in steps, a frame apart, the
+            // way a hand drags its corner — for what that does to the title
+            // bar. It moves the window, so only on a SEARCH_PROBE run.
+            guard Store.testing else {
+                answer(["error": "resize only works on a --test run — it would move your window"])
+                return
+            }
+            guard let window = Links.window,
+                  let width = request["width"] as? Double, let height = request["height"] as? Double
+            else { answer(["error": "resize needs a width and a height"]); return }
+            let steps = max(1, request["steps"] as? Int ?? 12)
+            let from = window.frame
+            func step(_ n: Int) {
+                let t = CGFloat(n) / CGFloat(steps)
+                var frame = from
+                frame.size.width = from.width + (CGFloat(width) - from.width) * t
+                frame.size.height = from.height + (CGFloat(height) - from.height) * t
+                frame.origin.y = from.maxY - frame.height
+                window.setFrame(frame, display: true)
+                if n < steps {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { step(n + 1) }
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        answer(["size": [Int(window.frame.width), Int(window.frame.height)], "lights": Bench.lights(of: window)])
+                    }
+                }
+            }
+            step(1)
 
         case "ui":
             // Open or close the app's own panels, to reproduce what a person

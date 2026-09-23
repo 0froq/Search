@@ -588,8 +588,11 @@ struct ContentView: View {
         // The strip does the dragging, so the page underneath can't be grabbed
         // by accident while selecting text.
         window.isMovableByWindowBackground = false
-        // Where you left it, at the size you left it.
-        window.setFrameAutosaveName("search")
+        // Where you left it, at the size you left it. A test run keeps its
+        // own: the name lives in the app's standard defaults, which every
+        // copy shares, and a probe resized for a test once changed the size
+        // the real window came back at.
+        window.setFrameAutosaveName(Store.world.map { "search (\($0))" } ?? "search")
 
         // The traffic lights set in from the corner and centred in the strip's
         // height, in both modes, without a toolbar's rounder corners — see

@@ -31,10 +31,20 @@ final class Lights: NSObject {
     private weak var window: NSWindow?
     private let moved: () -> Void
     private var placing = false
+    /// AppKit's own spacing between the three, read once from its first
+    /// layout and kept. Read again on every pass, it was caught while AppKit
+    /// was halfway through putting them back after a resize — one button
+    /// moved, the next not yet — and the three closed up from 23 points apart
+    /// to 13, on top of each other, a spacing each later pass then copied
+    /// from the one before. Reproduced with ./bench resize, 23 Sep 2026.
+    private let spacing: CGFloat
 
     private init(_ window: NSWindow, moved: @escaping () -> Void) {
         self.window = window
         self.moved = moved
+        let row = [NSWindow.ButtonType.closeButton, .miniaturizeButton].compactMap { window.standardWindowButton($0) }
+        let measured = row.count == 2 ? row[1].frame.minX - row[0].frame.minX : 0
+        spacing = (16...32).contains(measured) ? measured : 20
         super.init()
         let centre = NotificationCenter.default
         for name in [
@@ -77,8 +87,7 @@ final class Lights: NSObject {
             frame.origin.y = window.frame.height - height
             container.frame = frame
         }
-        // AppKit's own spacing between the three, kept; only the row moves.
-        let spacing = buttons[1].frame.minX - buttons[0].frame.minX
+        // Only the row moves; the spacing is AppKit's, from its first layout.
         for (index, button) in buttons.enumerated() {
             let size = button.frame.size
             let origin = NSPoint(
