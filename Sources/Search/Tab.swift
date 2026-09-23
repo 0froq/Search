@@ -45,26 +45,18 @@ enum Web {
         config.preferences.isElementFullscreenEnabled = true
         config.mediaTypesRequiringUserActionForPlayback = .audio
         if Store.testing, !Store.measuring { config.preferences.inactiveSchedulingPolicy = .none }
-        MainActor.assumeIsolated { inspector(config.preferences, on: inspects) }
+        inspector(config.preferences)
         return config
     }
 
-    /// Settings › General › Web Inspector. Every tab's view is told when it
-    /// changes, not only the ones made after: the menu is WebKit's, built
-    /// from the preferences the page has at the moment you right-click.
-    @MainActor static var inspects = false {
-        didSet {
-            guard inspects != oldValue else { return }
-            for page in pages.allObjects { inspector(page.configuration.preferences, on: inspects) }
-        }
-    }
-    /// Every page view there is, to be told.
+    /// Every page view there is, for the bench.
     @MainActor static let pages = NSHashTable<PageView>.weakObjects()
 
-    /// WebKit's "developer extras", which put Inspect Element in the menu.
+    /// WebKit's "developer extras": Inspect Element in a page's right-click
+    /// menu, and the Web Inspector the View menu opens (see Inspector.swift).
     /// isInspectable alone only lets Safari's Develop menu reach the page.
     /// The name is outside the public framework, so it is asked first.
-    static func inspector(_ preferences: WKPreferences, on: Bool) {
+    static func inspector(_ preferences: WKPreferences, on: Bool = true) {
         let set = NSSelectorFromString("_setDeveloperExtrasEnabled:")
         guard preferences.responds(to: set) else { return }
         typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
@@ -303,11 +295,11 @@ final class Tab: ObservableObject, Identifiable {
         // Pages follow the appearance of the window they are drawn in, and the
         // window follows Settings › Appearance — so a site that honours
         // prefers-color-scheme goes dark with the frame, and not otherwise.
-        // Safari's Develop menu can reach it. Inspect Element in the page's
-        // own menu is the setting's (see Web.inspects).
+        // Safari's Develop menu can reach it, and so can the page's own
+        // Inspect Element — a configuration handed over by an opener included.
         if #available(macOS 13.3, *) { web.isInspectable = true }
         Web.pages.add(web)
-        Web.inspector(web.configuration.preferences, on: Web.inspects)
+        Web.inspector(web.configuration.preferences)
         web.navigationDelegate = delegate
         web.uiDelegate = delegate
 

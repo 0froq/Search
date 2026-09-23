@@ -112,14 +112,6 @@ final class Preferences: ObservableObject {
     @Published var usesSpaces: Bool {
         didSet { store.set(usesSpaces, forKey: "spaces") }
     }
-    /// Inspect Element in a page's right-click menu, the Web Inspector
-    /// Safari shows once its Develop menu is on. Off unless asked for.
-    @Published var inspects: Bool {
-        didSet {
-            store.set(inspects, forKey: "inspector")
-            Web.inspects = inspects
-        }
-    }
 
     init() {
         // Carried over from when there were four ways of holding the browser
@@ -171,9 +163,9 @@ final class Preferences: ObservableObject {
         // existed; they are not asked to sit through it.
         welcomed = store.bool(forKey: "welcomed") || store.object(forKey: "glyph") != nil
         usesSpaces = store.bool(forKey: "spaces")
-        let inspecting = store.bool(forKey: "inspector")
-        inspects = inspecting
-        Web.inspects = inspecting
+        // Left behind by the Web Inspector's switch, from before it was
+        // always there.
+        store.removeObject(forKey: "inspector")
         let corrects = store.bool(forKey: "autocorrect")
         autocorrect = corrects
         // Before the first web view exists: WebKit reads these once.

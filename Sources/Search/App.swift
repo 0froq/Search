@@ -88,6 +88,14 @@ struct SearchApp: App {
                     .keyboardShortcut("-")
                 Button("Actual Size") { browser.resetZoom() }
                     .keyboardShortcut("0")
+                Divider()
+                // The Web Inspector, on the keys Chrome and Arc use (see Inspector.swift).
+                Button("Web Inspector") { browser.toggleInspector() }
+                    .keyboardShortcut("i", modifiers: [.command, .option])
+                Button("JavaScript Console") { browser.showConsole() }
+                    .keyboardShortcut("j", modifiers: [.command, .option])
+                Button("Inspect Element") { browser.inspectElement() }
+                    .keyboardShortcut("c", modifiers: [.command, .option])
             }
             CommandMenu("Tabs") {
                 Button("Back") { browser.back() }
