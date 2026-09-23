@@ -4,28 +4,30 @@ import WebKit
 
 // Passkeys and security keys, for a browser that isn't Safari.
 //
-// A WKWebView answers a page's navigator.credentials itself for one kind of
-// site only: those among the app's own associated domains. For any other —
-// browser entitlement, the Mac's permission and all — WebKit hands the
-// request to AuthenticationServices, which turns it down before any sheet is
-// shown ("Could not perform authorization", measured on GitHub 24 Sep 2026
-// with Search signed, entitled and allowed). That was the "authentication
-// failed" the moment you pressed "Sign in with a passkey".
+// Left to WebKit, a sign-in page that offers your passkey under its name
+// field (conditional mediation) has WebKit open an AutoFill operation with
+// macOS's AuthenticationServicesAgent, held for as long as the page waits.
+// If Search dies meanwhile — quit, crash, killed — the agent never lets go of
+// it, and refuses every passkey request Search makes after that, before any
+// sheet: "Request already in progress for specified application identifier"
+// (AuthenticationServicesCore.AuthorizationError 1). "Authentication failed"
+// on every site, until the agent restarts with the Mac. Found 24 Sep 2026 on
+// an agent that had held one for a day.
 //
-// A browser is meant to carry the ceremony itself, as Chrome and Firefox do
-// on the Mac: take the request from the page, check it against the frame it
-// came from, and hand it to AuthenticationServices through the API made for
-// browsers, with client data the browser writes — the origin in it is the
-// one WebKit reports for the frame, never one the page states. So a page's
-// navigator.credentials answers any request for a public key from here: the
-// Mac's own sheet, with Touch ID and the passkeys in iCloud Keychain or a
-// password app, an iPhone nearby over the QR code, or a security key. What
-// comes back goes to the page as the credential WebKit would have made.
+// So Search carries the ceremony itself, as Chrome and Firefox do on the Mac,
+// and never opens that operation: it takes the request from the page, checks
+// it against the frame it came from, and hands it to AuthenticationServices
+// through the API made for browsers, with client data it writes — the origin
+// in it is the one WebKit reports for the frame, never one the page states.
+// A page's navigator.credentials answers any request for a public key from
+// here: the Mac's own sheet, with Touch ID and the passkeys in iCloud Keychain
+// or a password app, an iPhone nearby over the QR code, or a security key.
+// What comes back goes to the page as the credential WebKit would have made.
 //
-// Not yet: the passkey offered under the name field as a sign-in page loads
-// (conditional mediation, Safari's AutoFill). Pages are told it isn't there,
-// so they show their own passkey button; a request made that way anyway just
-// waits, as it does while nobody picks one.
+// Not yet: the passkey offered under the name field as a sign-in page loads.
+// Pages are told it isn't there, so they show their own passkey button; a
+// request made that way anyway just waits, as it does while nobody picks one
+// — here, never reaching macOS.
 @MainActor
 final class Passkeys: NSObject {
     static let shared = Passkeys()
