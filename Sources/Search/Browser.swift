@@ -450,7 +450,7 @@ final class Browser: NSObject, ObservableObject {
 
     /// The last few places, for the History menu.
     var recentlyVisited: [History.Trace] {
-        Array(history.everything().prefix(8))
+        history.recent()
     }
 
     // MARK: - the camera and the microphone

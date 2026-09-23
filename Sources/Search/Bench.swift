@@ -588,6 +588,54 @@ final class Bench {
                 "titleBar": y <= Double(window.frame.height - window.contentLayoutRect.height),
             ])
 
+        case "field":
+            // Text put into the address field the way a paste puts it — the
+            // whole of it replacing what is selected — or typed a character
+            // at a time, each timed from the moment it goes in to the moment
+            // the run loop next rests: the list worked out, SwiftUI's update
+            // and Core Animation's commit included. Only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "field only works on a --test run — it would type into your browser"]); return }
+            guard let text = request["text"] as? String, !text.isEmpty else { answer(["error": "field needs some text"]); return }
+            let pieces = request["type"] as? Bool == true ? text.map(String.init) : [text]
+            if browser.fieldShowing { browser.askFocus() } else { browser.edit() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                guard let field = Bench.addressField(in: Links.window?.contentView),
+                      let editor = field.currentEditor() as? NSTextView
+                else { answer(["error": "the address field has no editor"]); return }
+                var times: [[Double]] = []
+                @MainActor func next(_ index: Int) {
+                    guard index < pieces.count else {
+                        var out: [String: Any] = ["field": field.stringValue, "typed": browser.typed, "offers": browser.offers.map(\.key), "ms": times]
+                        guard request["go"] as? Bool == true, let tab = browser.active else { answer(out); return }
+                        // Then Return, as the field's own delegate takes it:
+                        // how long until WebKit is loading the page.
+                        out["viewWasBuilt"] = tab.built != nil
+                        let start = CACurrentMediaTime()
+                        var loading: Double?
+                        let watch = tab.$loading.first(where: { $0 }).sink { _ in loading = (CACurrentMediaTime() - start) * 1000 }
+                        browser.submit()
+                        out["returned"] = (CACurrentMediaTime() - start) * 1000
+                        Bench.whenResting(since: start) { rested in
+                            out["rested"] = rested
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                watch.cancel()
+                                out["loading"] = loading ?? -1
+                                answer(out)
+                            }
+                        }
+                        return
+                    }
+                    let start = CACurrentMediaTime()
+                    editor.insertText(pieces[index], replacementRange: NSRange(location: NSNotFound, length: 0))
+                    let inserted = (CACurrentMediaTime() - start) * 1000
+                    Bench.whenResting(since: start) { rested in
+                        times.append([inserted, rested])
+                        DispatchQueue.main.async { next(index + 1) }
+                    }
+                }
+                next(0)
+            }
+
         case "place":
             // A tab put at another place in the row, as a drag would.
             guard let id = request["id"] as? String, let to = request["to"] as? Int,
@@ -965,7 +1013,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "space", "strip", "column", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "space", "strip", "column", "ui",
             ]])
         }
     }
@@ -1103,6 +1151,26 @@ final class Bench {
 
     static func short(_ tab: Tab) -> String {
         String(tab.id.uuidString.prefix(8)).lowercased()
+    }
+
+    /// The address field, wherever it is in the window.
+    static func addressField(in view: NSView?) -> NSTextField? {
+        guard let view else { return nil }
+        if let field = view as? NSTextField, field.delegate is AddressField.Coordinator { return field }
+        for sub in view.subviews { if let found = addressField(in: sub) { return found } }
+        return nil
+    }
+
+    /// Milliseconds from `start` to the run loop's next rest — after every
+    /// observer that runs before it sleeps, Core Animation's commit included.
+    static func whenResting(since start: CFTimeInterval, _ then: @escaping @MainActor (Double) -> Void) {
+        var observer: CFRunLoopObserver?
+        observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.beforeWaiting.rawValue, false, CFIndex.max) { _, _ in
+            CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes)
+            let rested = (CACurrentMediaTime() - start) * 1000
+            MainActor.assumeIsolated { then(rested) }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
     }
 
     /// Once the page has stopped loading, or the time is up.
