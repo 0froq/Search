@@ -17,6 +17,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- Passkeys from your Mac's keychain: the first time a site asks for one, macOS now asks whether Search may use your passkeys — a permission it had never been asked for, so the passkey a site offers under its sign-in field was refused on the spot. Refused by mistake? System Settings › Privacy & Security › Passkeys Access for Web Browsers.
 - A new space's choice of sign-ins reads in full in the column ("Signed in" / "Signed out"), where it was cut short.
 
 ## 1.0.1 — 23 September 2026
