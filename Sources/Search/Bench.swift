@@ -661,6 +661,32 @@ final class Bench {
                 }
             }
 
+        case "menu":
+            // The Bookmarks menu as it is about to open: the menu bar
+            // told it is being tracked, SwiftUI's own update run on it, its
+            // first folder opened — then what each holds. Only on a
+            // SEARCH_PROBE run; nothing is drawn.
+            guard Store.testing else { answer(["error": "menu only works on a --test run"]); return }
+            guard let main = NSApp.mainMenu, let menu = main.items.first(where: { $0.title == "Bookmarks" })?.submenu
+            else { answer(["error": "no Bookmarks menu"]); return }
+            let before = menu.items.count
+            let wrapped = menu.delegate.map { "\(type(of: $0))" } ?? "none"
+            let start = CACurrentMediaTime()
+            NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: main)
+            let filled = (CACurrentMediaTime() - start) * 1000
+            menu.delegate?.menuNeedsUpdate?(menu)
+            let folder = menu.items.first { $0.submenu != nil && $0.tag != 0 }?.submenu
+            if let folder { folder.delegate?.menuNeedsUpdate?(folder) }
+            // "open": the first bookmark in that folder picked, as a click would.
+            if request["open"] as? Bool == true, let folder,
+               let index = folder.items.firstIndex(where: { $0.representedObject is URL }) {
+                folder.performActionForItem(at: index)
+            }
+            answer(["delegate": wrapped, "before": before, "after": menu.items.count, "ours": BookmarkMenu.shared.count, "fillMs": filled,
+                    "titles": menu.items.prefix(8).map { $0.isSeparatorItem ? "—" : $0.title },
+                    "firstFolder": folder?.items.prefix(4).map(\.title) ?? [],
+                    "active": browser.active?.address?.absoluteString ?? ""])
+
         case "place":
             // A tab put at another place in the row, as a drag would.
             guard let id = request["id"] as? String, let to = request["to"] as? Int,
@@ -1038,7 +1064,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "space", "strip", "column", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "space", "strip", "column", "ui",
             ]])
         }
     }

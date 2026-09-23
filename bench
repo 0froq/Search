@@ -46,6 +46,8 @@
     ./bench field TEXT [type] [go]     test run: TEXT pasted into the address field (type: a key at a time),
                                        each timed until the window has caught up; go: then Return, timed
                                        until the page is loading
+    ./bench menu [open]                test run: the Bookmarks menu as it is about to open, and its first
+                                       folder (open: its first bookmark picked)
     ./bench bookmark URL [new]         test run: a bookmark picked from the list, timed until it loads
                                        (new: into a new tab, whose page isn't built yet)
     ./bench window                     test run: open the browser's window if a hidden probe came up without it
@@ -212,6 +214,9 @@ def main(argv):
         if len(args) not in (1, 2) or (len(args) == 2 and args[1] != "new"): sys.exit("usage: bench bookmark URL [new]")
         request["url"] = args[0]
         request["new"] = len(args) == 2
+    elif verb == "menu":
+        if args not in ([], ["open"]): sys.exit("usage: bench menu [open]")
+        request["open"] = args == ["open"]
     elif verb == "window":
         pass
     elif verb == "pages":
