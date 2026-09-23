@@ -953,7 +953,7 @@ final class Bench {
                 let dx = request["dx"] as? Double ?? -120
                 SpaceSwipe.shared.start(for: browser)
                 SpaceSwipe.shared.began()
-                for _ in 0..<12 { SpaceSwipe.shared.moved(dx: dx / 12, dy: 0) }
+                for _ in 0..<12 { SpaceSwipe.shared.moved(along: dx / 12) }
                 SpaceSwipe.shared.ended()
             case "hold":
                 // The fingers down and DX along, not yet let go — for a look
@@ -961,7 +961,7 @@ final class Bench {
                 let dx = request["dx"] as? Double ?? -120
                 SpaceSwipe.shared.start(for: browser)
                 SpaceSwipe.shared.began()
-                for _ in 0..<12 { SpaceSwipe.shared.moved(dx: dx / 12, dy: 0) }
+                for _ in 0..<12 { SpaceSwipe.shared.moved(along: dx / 12) }
             case "release":
                 SpaceSwipe.shared.ended()
             case "move":
