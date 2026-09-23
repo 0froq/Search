@@ -1272,6 +1272,15 @@ final class Browser: NSObject, ObservableObject {
         }
     }
 
+    /// A bookmark picked from the button's list or the full one. Either
+    /// goes as the page starts: the list off the button used to stay open
+    /// over the page it had just sent you to.
+    func pickBookmark(_ url: URL) {
+        bookmarking = false
+        bookmarksOpen = false
+        visit(url)
+    }
+
     /// ⌘⇧N. A tab that keeps nothing — its own cookies, its own sign-ins, no
     /// history, and no place in tomorrow's session.
     func newShyTab() {

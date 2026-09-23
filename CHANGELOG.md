@@ -20,6 +20,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- A bookmark picked from the list under its button closes the list as its page starts, instead of leaving it open over the page. Thanks [@andupoto](https://x.com/andupoto) for the report
 - A link pasted into the address field shows at once. Every key and every paste sorted the whole history again for the History menu, and cut every address in it into pieces to find its host, before the field could catch up. Thanks [@andupoto](https://x.com/andupoto) for the report
 - Passkeys from your Mac's keychain: the first time a site asks for one, macOS now asks whether Search may use your passkeys — a permission it had never been asked for, so the passkey a site offers under its sign-in field was refused on the spot. Refused by mistake? System Settings › Privacy & Security › Passkeys Access for Web Browsers.
 - ⌘⇧N no longer piles up empty private tabs: one already open comes to the end of the row, as with ⌘T.

@@ -636,6 +636,30 @@ final class Bench {
                 next(0)
             }
 
+        case "bookmark":
+            // A bookmark picked from the button's list, through the same
+            // call the list makes: how long until WebKit is loading it, and
+            // until the run loop rests. Only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "bookmark only works on a --test run — it would load a page in your tab"]); return }
+            guard let url = (request["url"] as? String).flatMap(Address.url(from:)) else { answer(["error": "bookmark needs a url"]); return }
+            // "new": into a new tab, whose page has yet to be built.
+            if request["new"] as? Bool == true { browser.newTab() }
+            guard let tab = browser.active else { answer(["error": "no tab to open it in"]); return }
+            browser.bookmarksOpen = true
+            let built = tab.built != nil
+            var loading: Double?
+            let start = CACurrentMediaTime()
+            let watch = tab.$loading.first(where: { $0 }).sink { _ in loading = (CACurrentMediaTime() - start) * 1000 }
+            browser.pickBookmark(url)
+            let returned = (CACurrentMediaTime() - start) * 1000
+            Bench.whenResting(since: start) { rested in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    watch.cancel()
+                    answer(["returned": returned, "loading": loading ?? -1, "rested": rested,
+                            "viewWasBuilt": built, "listStillOpen": browser.bookmarksOpen, "sameTab": browser.active?.id == tab.id])
+                }
+            }
+
         case "place":
             // A tab put at another place in the row, as a drag would.
             guard let id = request["id"] as? String, let to = request["to"] as? Int,
@@ -1013,7 +1037,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "space", "strip", "column", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "space", "strip", "column", "ui",
             ]])
         }
     }
