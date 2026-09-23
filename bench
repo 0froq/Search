@@ -26,6 +26,7 @@
     ./bench ext-menu PATH              the puzzle button's list, drawn to a PNG
     ./bench ext-shot ID PATH           a picture of its popup while it is open
     ./bench ext-answer yes|no|ask      test run: answer extensions' questions without asking; lists what was asked
+    ./bench ext-enable ID on|off       switch an extension on or off
     ./bench ext-remove ID
     ./bench ui KEY VALUE               settings/passwords/welcome/history/downloads/bookmarks/hidden on|off,
                                        look light|dark|system, sidebar on|off
@@ -105,6 +106,10 @@ def main(argv):
         if len(args) != 1: sys.exit(f"usage: bench {verb} ID")
         request["id"] = args[0]
         request["yes"] = yes
+    elif verb == "ext-enable":
+        if len(args) != 2: sys.exit("usage: bench ext-enable ID on|off")
+        request["id"] = args[0]
+        request["on"] = args[1] in ("on", "true", "1", "yes")
     elif verb == "ext-pin":
         if not 1 <= len(args) <= 2: sys.exit("usage: bench ext-pin ID [on|off]")
         request["id"] = args[0]

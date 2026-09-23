@@ -164,6 +164,7 @@ enum ExtensionShims {
         let shipped = (try? JSONSerialization.data(withJSONObject: scripts.sorted())).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         return script.replacingOccurrences(of: "__SEARCH_EVENTS__", with: list)
             .replacingOccurrences(of: "__SEARCH_SCRIPTS__", with: shipped)
+            .replacingOccurrences(of: "__SEARCH_CHROME__", with: Crx.chromeVersion)
             .replacingOccurrences(of: "__SEARCH_VERBOSE__", with: Store.testing ? "true" : "false")
     }
 
@@ -274,6 +275,25 @@ enum ExtensionShims {
       if (worker && typeof root.InstallEvent === "function" && !InstallEvent.prototype.addRoutes) {
         InstallEvent.prototype.addRoutes = () => Promise.resolve();
       }
+      // WebKit gives a worker the user agent of the last web page that set
+      // one — Safari's, as Search's tabs send — not the Chrome one the
+      // extension's pages have. Code that picks its path by it then takes
+      // the Safari one: Bitwarden's asks a Safari app for a reply thousands
+      // of times a second and floods the browser.
+      // Its pages too: an extension reads navigator.userAgent to pick a code
+      // path, a download, a welcome page, and finds nothing it knows in
+      // Safari's. (Not WebKit's setting: see Extensions.init.)
+      if (!inContent && typeof navigator !== "undefined" && !/ Chrome\//.test(navigator.userAgent)) {
+        const chromeUA = navigator.userAgent.replace(/ Version\/[\d.]+.*$/, "").replace(/ Safari\/[\d.]+$/, "") + " Chrome/__SEARCH_CHROME__ Safari/537.36";
+        const proto = typeof WorkerNavigator !== "undefined" && worker ? WorkerNavigator.prototype : typeof Navigator !== "undefined" ? Navigator.prototype : null;
+        try {
+          if (proto) {
+            Object.defineProperty(proto, "userAgent", { get: () => chromeUA, configurable: true });
+            Object.defineProperty(proto, "appVersion", { get: () => chromeUA.replace(/^Mozilla\//, ""), configurable: true });
+            Object.defineProperty(proto, "vendor", { get: () => "Google Inc.", configurable: true });
+          }
+        } catch (e) {}
+      }
       if (worker && typeof root.importScripts === "function") {
         const shipped = new Set(), empty = new Set();
         for (const p of __SEARCH_SCRIPTS__) p.startsWith("-") ? empty.add(p.slice(1)) : shipped.add(p);
@@ -363,7 +383,10 @@ enum ExtensionShims {
       let heard = 0;
       if (runtime && typeof runtime.sendMessage === "function") {
         const page = typeof document !== "undefined";
-        const send = runtime.sendMessage.bind(runtime);
+        // WebKit's own, looked up at each call — not held from the page's
+        // first moment, when the page isn't yet the tab or popup it will be.
+        const original = Object.getPrototypeOf(runtime).sendMessage;
+        const send = (...args) => original.apply(chrome.runtime, args);
         // WebKit can also lose a worker without knowing — its process
         // stopped along with a tab's — and then answers every message with
         // nothing, for good. So after waking it, a page asks the worker
@@ -628,6 +651,34 @@ enum ExtensionShims {
         ContextType: { TAB: "TAB", POPUP: "POPUP", BACKGROUND: "BACKGROUND", OFFSCREEN_DOCUMENT: "OFFSCREEN_DOCUMENT",
           SIDE_PANEL: "SIDE_PANEL", DEVELOPER_TOOLS: "DEVELOPER_TOOLS" },
       });
+      // The popup Search shows is a page of its own, known to WebKit as a
+      // tab with no place in the row (no index). Chrome has no current
+      // tab in a popup, and lists it among the popup views; extensions lay
+      // themselves out by that (Bitwarden, Proton Pass: or else they fill
+      // the window as if in a tab).
+      if (typeof document !== "undefined" && chrome.tabs && typeof chrome.tabs.getCurrent === "function") {
+        const getCurrent = chrome.tabs.getCurrent.bind(chrome.tabs);
+        let popup = false;
+        const current = () => Promise.resolve(getCurrent()).then((t) => {
+          if (t && !(t.index >= 0 && t.index < 1e6)) { popup = true; return undefined; }
+          return t;
+        });
+        current().catch(() => {});
+        put(chrome.tabs, "getCurrent", (callback) => {
+          const p = current();
+          if (typeof callback !== "function") return p;
+          p.then((t) => callback(t), (e) => withLastError(e, callback));
+        });
+        if (chrome.extension && typeof chrome.extension.getViews === "function") {
+          const getViews = chrome.extension.getViews.bind(chrome.extension);
+          put(chrome.extension, "getViews", (properties = {}) => {
+            let views = [...(getViews(properties) || [])];
+            if (popup && properties.type === "tab") views = views.filter((v) => v !== root);
+            if (popup && (!properties.type || properties.type === "popup") && !views.includes(root)) views.push(root);
+            return views;
+          });
+        }
+      }
       fill("extension", {
         getURL: (path) => runtime.getURL(path), ViewType: { TAB: "tab", POPUP: "popup" },
         sendRequest: (...args) => runtime.sendMessage(...args), onRequest: event(), onRequestExternal: event(),
@@ -1996,8 +2047,17 @@ enum ExtensionShims {
             // it, and then never tries again: every message waits for ever.
             // Tried twice more, then the extension is taken up afresh.
             for attempt in 0..<3 {
+                // WebKit never calls back after some failed starts; eight
+                // seconds without an answer counts as a failure.
                 let error: Error? = await withCheckedContinuation { done in
-                    context.loadBackgroundContent { done.resume(returning: $0) }
+                    var finished = false
+                    let finish: (Error?) -> Void = { result in
+                        guard !finished else { return }
+                        finished = true
+                        done.resume(returning: result)
+                    }
+                    context.loadBackgroundContent { error in MainActor.assumeIsolated { finish(error) } }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) { finish(Unsupported(what: "no answer from WebKit")) }
                 }
                 guard error != nil else { return nil }
                 if attempt < 2 { try? await Task.sleep(for: .milliseconds(400)) }

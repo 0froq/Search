@@ -15,6 +15,10 @@ enum Web {
     /// Modern WebKit pools processes by data store on its own — every tab
     /// asking for the same one is what gets the second tab a warm process, and
     /// the old WKProcessPool knob does nothing now.
+    /// What every view says it is after "AppleWebKit … (KHTML, like Gecko)"
+    /// — web tabs and extension views alike (see Extensions.init).
+    static let userAgentName = "Version/26.5 Safari/605.1.15"
+
     static func configuration(shy: Bool = false) -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration()
         // The real store, not the ephemeral one: staying signed in between
@@ -31,7 +35,7 @@ enum Web {
         // no side panel, no dark mode, none of the modern tabs. Naming a
         // version turns it into the same string Safari sends, and the modern
         // page comes back.
-        config.applicationNameForUserAgent = "Version/26.5 Safari/605.1.15"
+        config.applicationNameForUserAgent = Web.userAgentName
         config.allowsAirPlayForMediaPlayback = true
         // Off by default on macOS, which is why a full-screen button on a video
         // did nothing at all: the page asks, and WebKit refuses without a word.

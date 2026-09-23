@@ -106,12 +106,13 @@ final class Extensions: NSObject, ObservableObject {
         // extension's pages keep what they store where the browser does —
         // and a test run's apart from the real one's.
         views.websiteDataStore = Store.websites
-        // An extension's own pages and worker say Chrome, because Chrome is
-        // what they were written for: plenty read navigator.userAgent to
-        // pick a code path, a download, a welcome page — and find nothing
-        // they know in Safari's. Web pages keep Safari's, which is what
-        // gets them to serve their modern selves.
-        views.applicationNameForUserAgent = "Chrome/\(Crx.chromeVersion) Safari/537.36"
+        // The same user agent as the web tabs, to the letter. WebKit gives
+        // workers the user agent of the last page that loaded and, when it
+        // differs, stops the running workers to apply it — and extension
+        // workers it then never starts again: every page that opened killed
+        // the extensions. Extensions are told they run in Chrome by the shim
+        // instead (navigator.userAgent in their pages and workers).
+        views.applicationNameForUserAgent = Web.userAgentName
         // A test run sits behind other windows, where WebKit slows its views
         // to a crawl and messages between an extension's popup and its
         // worker stop arriving. Not what anyone is testing.
@@ -231,6 +232,7 @@ final class Extensions: NSObject, ObservableObject {
                 context.setPermissionStatus(.grantedExplicitly, for: pattern)
             }
             try controller.load(context)
+            watch(context)
             if contexts[item.id] == nil, loadsThisRun.contains(item.id) { loadedBefore.insert(item.id) }
             loadsThisRun.insert(item.id)
             contexts[item.id] = context
@@ -362,6 +364,9 @@ final class Extensions: NSObject, ObservableObject {
     /// as a relaunch would — at most once a minute, so one that can never
     /// start doesn't go round in circles.
     private var revived: [String: Date] = [:]
+    /// Recent failed native messages, per extension and host.
+    private var failures: [String: [Date]] = [:]
+
     /// Loaded at least once since the browser started, and loaded again.
     private var loadsThisRun: Set<String> = []
     private(set) var loadedBefore: Set<String> = []
@@ -378,6 +383,29 @@ final class Extensions: NSObject, ObservableObject {
         Task {
             guard await load(item), let popup, let context = contexts[id] else { return }
             ExtensionPopup.shared.show(popup, for: context, from: anchor)
+        }
+    }
+
+    /// WebKit records a worker that failed to start as an error on its
+    /// context, and then doesn't try again: the extension would be dead
+    /// until someone noticed. It is taken up afresh as soon as that shows.
+    private var errorWatchers: [String: NSObjectProtocol] = [:]
+    private func watch(_ context: WKWebExtensionContext) {
+        let id = context.uniqueIdentifier
+        if let old = errorWatchers[id] { NotificationCenter.default.removeObserver(old) }
+        errorWatchers[id] = NotificationCenter.default.addObserver(forName: WKWebExtensionContext.errorsDidUpdateNotification, object: context, queue: .main) { [weak self, weak context] _ in
+            MainActor.assumeIsolated {
+                guard let self, let context, self.contexts[id] === context else { return }
+                let failed = context.errors.contains { error in
+                    let e = error as NSError
+                    return e.domain == WKWebExtensionContext.errorDomain && e.code == WKWebExtensionContext.Error.backgroundContentFailedToLoad.rawValue
+                }
+                guard failed else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    guard let self, self.contexts[id] === context else { return }
+                    self.revive(id, because: "its worker failed to start")
+                }
+            }
         }
     }
 
@@ -821,7 +849,18 @@ extension Extensions: WKWebExtensionControllerDelegate {
         if applicationIdentifier == nil || applicationIdentifier == ExtensionShims.application {
             return try await ExtensionShims.answer(message, from: extensionContext, owner: self)
         }
-        return try await ExtensionNative.send(message, to: applicationIdentifier!, from: extensionContext.uniqueIdentifier)
+        let id = extensionContext.uniqueIdentifier, host = applicationIdentifier!
+        do {
+            return try await ExtensionNative.send(message, to: host, from: id)
+        } catch {
+            // An extension asking an app that isn't there, over and over —
+            // a retry loop — is answered slowly once it has asked a dozen
+            // times in a second, so it can't swamp the browser.
+            let key = id + "→" + host, now = Date()
+            failures[key] = (failures[key] ?? []).filter { now.timeIntervalSince($0) < 1 } + [now]
+            if (failures[key]?.count ?? 0) > 12 { try? await Task.sleep(for: .seconds(1)) }
+            throw error
+        }
     }
 
     func webExtensionController(_ controller: WKWebExtensionController, connectUsing port: WKWebExtension.MessagePort, for extensionContext: WKWebExtensionContext) async throws {
