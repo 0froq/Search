@@ -621,6 +621,7 @@ struct TabMenu: View {
             Button("Unpin") { browser.unpin(tab) }
         }
         Divider()
+        Button("Rename") { browser.beginTabRename(tab) }
         Button("Duplicate") {
             browser.select(tab)
             browser.duplicate()
