@@ -430,13 +430,15 @@ final class Bench {
                 default: break
                 }
             }
+            // "repeat": the press a key held down sends again and again.
+            let repeats = (request["mods"] as? [String] ?? []).contains("repeat")
             for type in [NSEvent.EventType.keyDown, .keyUp] {
                 guard let event = NSEvent.keyEvent(
                     with: type, location: .zero, modifierFlags: flags,
                     timestamp: ProcessInfo.processInfo.systemUptime,
                     windowNumber: Links.window?.windowNumber ?? 0, context: nil,
                     characters: chars, charactersIgnoringModifiers: chars,
-                    isARepeat: false, keyCode: UInt16(code)
+                    isARepeat: repeats && type == .keyDown, keyCode: UInt16(code)
                 ) else { continue }
                 NSApp.postEvent(event, atStart: false)
             }
@@ -520,6 +522,32 @@ final class Bench {
             else { answer(["error": "hit needs an x and a y"]); return }
             let point = NSPoint(x: x, y: Double(window.frame.height) - y)
             let hit = frame.hitTest(frame.convert(point, from: nil))
+            if request["middle"] as? Bool == true {
+                // The middle button pressed and let go there. A probe's window
+                // is hidden and takes no events through the app, so they are
+                // handed to the view that catches the middle button over the
+                // tabs (MiddleClick in TabBar.swift), the topmost one there.
+                guard Store.testing else { answer(["error": "hit … middle only works on a --test run"]); return }
+                func catcher(in view: NSView) -> NSView? {
+                    for sub in view.subviews.reversed() { if let found = catcher(in: sub) { return found } }
+                    guard String(describing: type(of: view)).contains("Catch") else { return nil }
+                    return view.convert(view.bounds, to: nil).contains(point) ? view : nil
+                }
+                guard let target = catcher(in: frame) else { answer(["error": "nothing catches the middle button there"]); return }
+                let before = browser.tabs.count
+                for type in [NSEvent.EventType.otherMouseDown, .otherMouseUp] {
+                    guard let event = NSEvent.mouseEvent(
+                        with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                        pressure: type == .otherMouseUp ? 0 : 1
+                    ) else { continue }
+                    if type == .otherMouseDown { target.otherMouseDown(with: event) } else { target.otherMouseUp(with: event) }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    answer(["tabsBefore": before, "tabsAfter": browser.tabs.count])
+                }
+                return
+            }
             if request["double"] as? Bool == true {
                 // A double-click there, handed to the view under it — through
                 // the window it would never arrive, the probe being in the
@@ -866,6 +894,7 @@ final class Bench {
             "id": Bench.short(tab),
             "url": tab.address?.absoluteString ?? "",
             "title": tab.title,
+            "name": tab.name ?? "",
             "loading": tab.loading,
             "hollow": tab.hollow,
             "view": tab.built?.url?.absoluteString ?? "",

@@ -9,7 +9,7 @@
     ./bench select ID                  bring a tab to the front — --test runs only
     ./bench resize W H [STEPS]         take the window to W×H in steps, like a drag — --test runs only
     ./bench key ID TEXT                press keys on a tab as real key events — --test runs only
-    ./bench press CODE CHARS [MODS…]   press a key on the whole app (cmd shift ctrl opt) — --test runs only
+    ./bench press CODE CHARS [MODS…]   press a key on the whole app (cmd shift ctrl opt, repeat) — --test runs only
     ./bench tap ID SELECTOR            a real mouse click on an element (or text=Words) — --test runs only
     ./bench text ID                    the page's text
     ./bench eval ID JS                 run JavaScript, print what it returns
@@ -39,7 +39,7 @@
                                        switch to the Nth, delete this one,
                                        two fingers DX points sideways over the column (hold: not let go yet),
                                        move this one to Nth
-    ./bench hit X Y [double]           what a press at X Y (points from the window's top left) lands on,
+    ./bench hit X Y [double|middle]    what a press at X Y (points from the window's top left) lands on,
                                        and whether a drag from there would move the window;
                                        double: test run, a double-click there (start the probe hidden)
     ./bench film peek|unpeek|fold PATH [N] [SECS]  the window drawn N times while it animates → PATH-00.png… — --test runs only
@@ -188,9 +188,9 @@ def main(argv):
         elif args and args[0] == "move" and len(args) == 2: request["action"], request["index"] = "move", int(args[1])
         elif args: sys.exit("usage: bench space [new NAME | go N | delete | swipe DX | hold DX | release | move N]")
     elif verb == "hit":
-        if len(args) not in (2, 3) or (len(args) == 3 and args[2] != "double"): sys.exit("usage: bench hit X Y [double]")
+        if len(args) not in (2, 3) or (len(args) == 3 and args[2] not in ("double", "middle")): sys.exit("usage: bench hit X Y [double|middle]")
         request["x"], request["y"] = float(args[0]), float(args[1])
-        if len(args) == 3: request["double"] = True
+        if len(args) == 3: request[args[2]] = True
     elif verb == "film":
         if len(args) not in (2, 3, 4) or args[0] not in ("peek", "unpeek", "fold", "none"):
             sys.exit("usage: bench film peek|unpeek|fold|none PATH [FRAMES] [EVERY]")

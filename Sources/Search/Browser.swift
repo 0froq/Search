@@ -929,6 +929,12 @@ final class Browser: NSObject, ObservableObject {
     // MARK: - tabs
 
     func newTab() {
+        // ⌘T held down repeats. Each press is a new tab, even beside an empty
+        // one, but a key left down is one press, not a row of empty tabs for
+        // as long as it stays there.
+        if let event = NSApp.currentEvent, event.type == .keyDown, event.isARepeat, active?.isBlank == true {
+            return
+        }
         // An extension's new tab page, if one asked and you said yes.
         if #available(macOS 15.4, *), let page = Extensions.shared.newTabPage {
             open(page, foreground: true)
@@ -1270,7 +1276,7 @@ final class Browser: NSObject, ObservableObject {
             guard let url = URL(string: entry.url) else { continue }
             let tab = Tab(configuration: Web.configuration(space: space))
             prepare(tab)
-            tab.restore(url: url, title: entry.title)
+            tab.restore(url: url, title: entry.title, name: entry.name)
             tab.pin = entry.pin
             row.append(tab)
         }
