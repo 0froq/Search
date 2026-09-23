@@ -21,6 +21,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- Before macOS 15.4, where Search can't run extensions, the Chrome Web Store no longer shows an "Add to Search" button that did nothing when pressed; Settings › Extensions says what they need. Thanks [@andupoto](https://x.com/andupoto) for the report
 - Started hidden — `open -j`, or anything that launches Search in the background — Search comes up with its window, hidden with it until shown, where it could come up with no window at all.
 - A new tab starts loading the moment you press Return or pick a bookmark. Each new tab used to start its web process from cold first — about 40 to 60 milliseconds with the window stuck — where it now takes about 10. Thanks [@andupoto](https://x.com/andupoto) for the report
 - A bookmark picked from the list under its button closes the list as its page starts, instead of leaving it open over the page. Thanks [@andupoto](https://x.com/andupoto) for the report

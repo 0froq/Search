@@ -445,9 +445,14 @@ final class Tab: ObservableObject, Identifiable {
         controller.addUserScript(
             WKUserScript(source: ImageRelay.watch, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
-        controller.addUserScript(
-            WKUserScript(source: StoreRelay.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
-        )
+        // The store's "Add to Search" only where Search can add extensions.
+        // Before macOS 15.4 it was drawn all the same, and pressing it did
+        // nothing at all; Settings › Extensions says what they need instead.
+        if #available(macOS 15.4, *) {
+            controller.addUserScript(
+                WKUserScript(source: StoreRelay.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+            )
+        }
         if !FormRelay.passkeysOffered {
             controller.addUserScript(
                 WKUserScript(
