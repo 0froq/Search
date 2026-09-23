@@ -23,7 +23,7 @@ struct Login: Identifiable, Equatable, Hashable {
 enum Vault {
     /// What every item of ours is tagged with. A test run tags its own, so a
     /// password saved while trying something never sits among the real ones.
-    private static let label = Store.testing ? "Search (test)" : "Search"
+    private static let label = Store.world.map { "Search (\($0))" } ?? "Search"
 
     // MARK: - reading
 

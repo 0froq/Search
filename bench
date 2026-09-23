@@ -33,7 +33,8 @@
 
 Needs Settings › General › "Let a script drive Search" switched on in the
 running app. IDs are the first characters of a tab's id, as `tabs` prints
-them. With --test, talks to a SEARCH_PROBE run instead of the real one.
+them. With --test, talks to a SEARCH_PROBE run instead of the real one;
+with --world NAME, to a SEARCH_PROBE=NAME run, the world "Search (NAME)".
 """
 
 import json
@@ -41,8 +42,8 @@ import os
 import socket
 import sys
 
-def folder(test):
-    name = "Search (test)" if test else "Search"
+def folder(world):
+    name = f"Search ({world})" if world else "Search"
     return os.path.expanduser(f"~/Library/Application Support/{name}")
 
 def ask(path, request):
@@ -63,7 +64,13 @@ def ask(path, request):
     return json.loads(line or b"{}")
 
 def main(argv):
-    test = "--test" in argv
+    world = "test" if "--test" in argv else None
+    if "--world" in argv:
+        at = argv.index("--world")
+        if at + 1 >= len(argv): sys.exit("usage: bench --world NAME COMMAND …")
+        world = "".join(c for c in argv[at + 1].lower() if c.isascii() and (c.isalnum() or c == "-"))
+        if world in ("", "1"): world = "test"
+        argv = argv[:at] + argv[at + 2:]
     yes = "--yes" in argv
     argv = [a for a in argv if a not in ("--test", "--yes")]
     if not argv or argv[0] in ("-h", "--help", "help"):
@@ -138,7 +145,7 @@ def main(argv):
     elif verb not in ("tabs", "probe", "extensions"):
         sys.exit(f"unknown command “{verb}” — see bench help")
 
-    answer = ask(os.path.join(folder(test), "bench.sock"), request)
+    answer = ask(os.path.join(folder(world), "bench.sock"), request)
     if "error" in answer:
         sys.exit("error: " + str(answer["error"]))
     if verb == "text":

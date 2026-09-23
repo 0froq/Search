@@ -98,7 +98,7 @@ final class Extensions: NSObject, ObservableObject {
         // A test run keeps its extensions' storage apart, as it does its
         // cookies and passwords.
         let configuration: WKWebExtensionController.Configuration = Store.testing && !Store.ownContainer
-            ? .init(identifier: UUID(uuidString: "5E4C0000-0000-4000-8000-000000000002")!)
+            ? .init(identifier: Store.probeStore(2))
             : .default()
         configuration.defaultWebsiteDataStore = Store.websites
         let views = configuration.webViewConfiguration ?? WKWebViewConfiguration()
@@ -116,7 +116,7 @@ final class Extensions: NSObject, ObservableObject {
         // A test run sits behind other windows, where WebKit slows its views
         // to a crawl and messages between an extension's popup and its
         // worker stop arriving. Not what anyone is testing.
-        if Store.testing { views.preferences.inactiveSchedulingPolicy = .none }
+        if Store.testing, !Store.measuring { views.preferences.inactiveSchedulingPolicy = .none }
         configuration.webViewConfiguration = views
         controller = WKWebExtensionController(configuration: configuration)
         super.init()
