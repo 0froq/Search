@@ -24,6 +24,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- Search can be chosen as the default web browser. macOS only lists an app there when it claims XHTML pages as well as HTML pages; Search claimed HTML, http, and https, and so never appeared in Desktop & Dock → Default web browser. Thanks [@Aaditya2605](https://github.com/Aaditya2605) ([#140](https://github.com/driceroland/Search/pull/140))
 - Sites whose redirects carry a binary content type — `youtube.com` sends `application/binary` on its move to `www.youtube.com` — are followed to their destination instead of being downloaded as a file. Thanks [@danielferrazs](https://github.com/danielferrazs) ([#124](https://github.com/driceroland/Search/pull/124))
 - Esc puts away Downloads, as it does History and every other panel. Thanks [@shashwataggarwal](https://github.com/shashwataggarwal) ([#80](https://github.com/driceroland/Search/pull/80))
 - A tab's title in the column runs to the end of its row, where it stopped short to leave room for a cross that only shows under the pointer; under the pointer, the title fades out beneath the cross. ([#84](https://github.com/driceroland/Search/issues/84)) Thanks [@caisergan](https://github.com/caisergan) ([#109](https://github.com/driceroland/Search/pull/109))
