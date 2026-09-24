@@ -13,6 +13,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- Copy as Markdown Link, in a tab's right-click menu beside Copy Address and in the Tabs menu: `[title](address)`, ready to paste into a note, a message or a pull request. ([#81](https://github.com/driceroland/Search/issues/81)) Thanks [@merttopuz](https://github.com/merttopuz) ([#82](https://github.com/driceroland/Search/pull/82))
 - A middle-click on a link opens it in a tab of its own beside the one you are on, and leaves you where you were — the same thing ⌘-click does, for hands that learned it that way. ([#45](https://github.com/driceroland/Search/issues/45)) Thanks [@Dodothereal](https://github.com/Dodothereal) ([#71](https://github.com/driceroland/Search/pull/71))
 - Brave Search and Qwant join the engines in Settings › General › Search with. Thanks [@vivescene](https://github.com/vivescene) ([#52](https://github.com/driceroland/Search/pull/52))
 - Pages at 120 Hz on a screen that can, like a MacBook Pro's: animations and scrolling in pages drawn up to 120 times a second instead of about 60. Settings › General › Pages at 120 Hz, off by default, as in Safari; it uses more battery. Open tabs follow when reloaded. Thanks [@AxxzyWasTaken](https://github.com/AxxzyWasTaken) ([#87](https://github.com/driceroland/Search/pull/87))
