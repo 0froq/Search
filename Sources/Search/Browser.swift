@@ -1490,6 +1490,12 @@ final class Browser: NSObject, ObservableObject {
         }
         tab.onPickEnd = { [weak self] _ in self?.veiling = false }
         tab.onImageMenu = { [weak self] tab, url in self?.showImageMenu(for: tab, at: url) }
+        tab.searchName = { [weak self] in self.map { $0.prefs.engine.name(custom: $0.prefs.customEngine) } }
+        tab.onSearch = { [weak self] tab, text in
+            guard let self, let url = self.searchURL(for: text) else { return }
+            // From a private tab, the search is private too (see open(_:foreground:atEnd:from:)).
+            self.open(url, foreground: true, from: tab)
+        }
         tab.onStoreAdd = { [weak self] tab in self?.addFromStore(tab) }
         // The middle button on a link opens it beside the tab you are on, as
         // it does in every other browser (see MiddleRelay).
