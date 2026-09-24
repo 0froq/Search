@@ -22,6 +22,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- A floating panel no longer loses the cursor over a page that hides it: the six sheets in `App.swift` — Settings, History, Downloads, Bookmarks, Welcome, Passwords — now own an arrow cursor rect of their own, so a page's `cursor: none` stops at the panel's edge instead of painting invisible air across the whole sheet.
 - The stand-in traffic lights drawn while Search is in the background are no longer redrawn each time the window changes screen or size, only when they move.
 - An empty tab no longer works the processor while it waits: the slow breath under the address field was redrawn by the app every frame, about a sixth of a core with nothing happening. The same breath now runs in macOS's own animation layer, at no cost to Search.
 - With extensions installed, the window no longer waits for them: they load once it is up. The first launch after an update, when Search fits its Chrome compatibility layer to each extension again, does that away from the main thread — with Grammarly, the window had stood still for half a second. Thanks [@andupoto](https://x.com/andupoto) for the report
