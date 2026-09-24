@@ -24,6 +24,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- The first launch, the one with the welcome screen, puts its window up about 50 ms sooner: the browsers to bring things over from are looked for when that page is reached, not while the window is being built. Thanks [@dttdrv](https://github.com/dttdrv) ([#155](https://github.com/driceroland/Search/pull/155))
 - Search can be chosen as the default web browser. macOS only lists an app there when it claims XHTML pages as well as HTML pages; Search claimed HTML, http, and https, and so never appeared in Desktop & Dock → Default web browser. Thanks [@Aaditya2605](https://github.com/Aaditya2605) ([#140](https://github.com/driceroland/Search/pull/140))
 - Sites whose redirects carry a binary content type — `youtube.com` sends `application/binary` on its move to `www.youtube.com` — are followed to their destination instead of being downloaded as a file. Thanks [@danielferrazs](https://github.com/danielferrazs) ([#124](https://github.com/driceroland/Search/pull/124))
 - Esc puts away Downloads, as it does History and every other panel. Thanks [@shashwataggarwal](https://github.com/shashwataggarwal) ([#80](https://github.com/driceroland/Search/pull/80))
