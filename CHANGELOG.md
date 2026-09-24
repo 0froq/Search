@@ -24,6 +24,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- Esc puts away Downloads, as it does History and every other panel. Thanks [@shashwataggarwal](https://github.com/shashwataggarwal) ([#80](https://github.com/driceroland/Search/pull/80))
 - A tab's title in the column runs to the end of its row, where it stopped short to leave room for a cross that only shows under the pointer; under the pointer, the title fades out beneath the cross. ([#84](https://github.com/driceroland/Search/issues/84)) Thanks [@caisergan](https://github.com/caisergan) ([#109](https://github.com/driceroland/Search/pull/109))
 - An extension's button closes its popup when pressed a second time, as in Chrome, instead of opening it again. Thanks [@iuri1911](https://github.com/iuri1911) ([#137](https://github.com/driceroland/Search/pull/137))
 - 1Password works: signing in to it in the browser adds your account and unlocks it, and its menu offers your logins on Google and every other site. Once a sign-in succeeded the extension froze for good, its popup included, and the account was never added: WebKit hangs an extension's worker that opens a WebSocket, and 1Password opens one right then. An extension's worker now gets its sockets from Search. The tab 1Password then sends to its own page goes there too, where it stayed on a spinner. To unlock with the 1Password app instead, add Search in 1Password › Settings › Browser › Add Browser. Thanks [@iuri1911](https://github.com/iuri1911) ([#126](https://github.com/driceroland/Search/pull/126))
