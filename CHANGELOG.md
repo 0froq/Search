@@ -24,6 +24,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- Pages are told the Safari version this Mac has, not a fixed Safari 26.5: on an older macOS, a site trusting that number could send code its WebKit can't run. Thanks [@peter-bf](https://github.com/peter-bf) ([#110](https://github.com/driceroland/Search/pull/110))
 - Passwords, Bookmarks and the welcome screen find the browsers to bring things over from without walking through their caches: a few milliseconds instead of twenty, each time those lists are drawn. Thanks [@dttdrv](https://github.com/dttdrv) ([#156](https://github.com/driceroland/Search/pull/156))
 - The first launch, the one with the welcome screen, puts its window up about 50 ms sooner: the browsers to bring things over from are looked for when that page is reached, not while the window is being built. Thanks [@dttdrv](https://github.com/dttdrv) ([#155](https://github.com/driceroland/Search/pull/155))
 - Search can be chosen as the default web browser. macOS only lists an app there when it claims XHTML pages as well as HTML pages; Search claimed HTML, http, and https, and so never appeared in Desktop & Dock → Default web browser. Thanks [@Aaditya2605](https://github.com/Aaditya2605) ([#140](https://github.com/driceroland/Search/pull/140))
