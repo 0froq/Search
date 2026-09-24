@@ -13,6 +13,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- The video you're watching can float when you switch to another app, as in Arc, and go back into its tab when you return to it. Settings › General › Float the video when you switch apps, off by default. Only from the sites a video floats from on its own when you leave its tab; one floated with ⌘⇧P stays out. Thanks [@farchanrifai](https://github.com/farchanrifai) ([#152](https://github.com/driceroland/Search/pull/152))
 - A mouse's back and forward side buttons navigate the page, the way the trackpad's two-finger swipe already does. Thanks [@reloadedhead](https://github.com/reloadedhead) ([#79](https://github.com/driceroland/Search/pull/79))
 - Flick the floating video to a corner, as in Arc and Dia: two fingers on the window send it to the corner or edge they point at, on a short spring, instead of pushing it along. Settings › General › Flick the floating video to a corner, off by default. Dragging still puts it anywhere. Thanks [@farchanrifai](https://github.com/farchanrifai) ([#151](https://github.com/driceroland/Search/pull/151))
 - Spaces with the tabs across the top: two fingers up or down over the bar, or a notch of a mouse wheel, bring the next space's tabs in as these go; past the last, a new space is made right in the bar. "New Space…" makes it in place in the column too.
