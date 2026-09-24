@@ -254,6 +254,9 @@ final class Tab: ObservableObject, Identifiable {
     var onImageMenu: ((Tab, URL) -> Void)?
     /// "Add to Search" was pressed on the Chrome Web Store page this tab shows.
     var onStoreAdd: ((Tab) -> Void)?
+    /// The middle button was let go over a link. The browser opens it in a
+    /// tab of its own beside this one, without leaving the page you are on.
+    var onMiddleClick: ((Tab, URL) -> Void)?
     /// The extension whose store page has its own "Add to Search" button in
     /// place — so the bar at the bottom of the window doesn't offer it twice.
     @Published var storePlaced: String?
@@ -263,6 +266,7 @@ final class Tab: ObservableObject, Identifiable {
     private let forms = FormRelay()
     private let images = ImageRelay()
     private let shop = StoreRelay()
+    private let middles = MiddleRelay()
     private let passkeyRelay = PasskeyRelay()
     private let hovered = HoveredLink()
     private let ears = AudioWatch()
@@ -372,6 +376,7 @@ final class Tab: ObservableObject, Identifiable {
         controller.removeScriptMessageHandler(forName: ImageRelay.name)
         controller.removeScriptMessageHandler(forName: StoreRelay.name)
         controller.removeScriptMessageHandler(forName: PasskeyRelay.name)
+        controller.removeScriptMessageHandler(forName: MiddleRelay.name)
         controller.removeScriptMessageHandler(forName: HoveredLink.name, contentWorld: .defaultClient)
         controller.add(relay, name: ScrollRelay.name)
         controller.add(veils_, name: VeilRelay.name)
@@ -379,6 +384,7 @@ final class Tab: ObservableObject, Identifiable {
         controller.add(shop, name: StoreRelay.name)
         controller.add(forms, name: FormRelay.name)
         controller.addScriptMessageHandler(passkeyRelay, contentWorld: .page, name: PasskeyRelay.name)
+        controller.add(middles, name: MiddleRelay.name)
         hovered.tab = self
         controller.add(hovered, contentWorld: .defaultClient, name: HoveredLink.name)
         Shield.shared.protect(controller)
@@ -422,6 +428,7 @@ final class Tab: ObservableObject, Identifiable {
         forms.tab = self
         images.tab = self
         shop.tab = self
+        middles.tab = self
         ears.watch(web) { [weak self] on in self?.noisy = on }
         return web
     }
@@ -491,6 +498,11 @@ final class Tab: ObservableObject, Identifiable {
                 WKUserScript(source: StoreRelay.script, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
             )
         }
+        // The main frame only: a middle-click on a link inside an ad iframe is
+        // that frame's own business, and its link is not this tab's to open.
+        controller.addUserScript(
+            WKUserScript(source: MiddleRelay.watch, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        )
         // Only while Settings says so: off, pages get nothing at all.
         if HoveredLink.on {
             controller.addUserScript(WKUserScript(
@@ -965,6 +977,7 @@ final class Tab: ObservableObject, Identifiable {
         controller.removeScriptMessageHandler(forName: ImageRelay.name)
         controller.removeScriptMessageHandler(forName: StoreRelay.name)
         controller.removeScriptMessageHandler(forName: PasskeyRelay.name)
+        controller.removeScriptMessageHandler(forName: MiddleRelay.name)
         controller.removeScriptMessageHandler(forName: HoveredLink.name, contentWorld: .defaultClient)
         controller.removeAllUserScripts()
         web.onPull = nil
@@ -1014,6 +1027,76 @@ final class AudioWatch: NSObject {
     }
 
     deinit { stop() }
+}
+
+/// The middle button on a link, as the page reports it.
+///
+/// A middle-click on a link opens it beside the tab you are on, in every
+/// other browser, and WebKit leaves that to the browser: it tells the page
+/// about the click and hands this app no navigation action for it at all, the
+/// way it does for ⌘-click (and where it does report a button, it answers
+/// with a mask — 1 left, 2 right, 4 middle — so a check for the middle button
+/// as 2 would catch the right one). The page can see the click, though, so
+/// the page is asked: its own `auxclick` for the middle button names the link
+/// under the pointer, and from there it is an ordinary address to open.
+///
+/// Only the main frame, only a real link to somewhere this browser
+/// would go, and only the middle button. A page's own handler runs as it
+/// always did — this says where to, and changes nothing about the click.
+///
+/// Two things are checked before anything is opened. The event has to carry a
+/// real click: a synthesized `auxclick` is not one, so a page that dispatches
+/// its own does not get a tab per dispatch. And it has to be unclaimed — a
+/// click a page has called `preventDefault` on is a click it has dealt with,
+/// which is why this listens as the event comes back up rather than on the
+/// way down, where nothing has answered yet.
+final class MiddleRelay: NSObject, WKScriptMessageHandler {
+    static let name = "officeMiddle"
+
+    weak var tab: Tab?
+
+    static let watch = """
+    (function () {
+      if (window.__officeMiddle) return;
+      window.__officeMiddle = true;
+      document.addEventListener('auxclick', function (e) {
+        if (e.button !== 1 || !e.isTrusted || e.defaultPrevented) return;
+        // The path, not the parents: a link inside an open shadow root is
+        // on it too. An <area> of an image map is a link, and so is an SVG
+        // <a>, whose href is an object that holds the address as written.
+        var path = e.composedPath();
+        for (var i = 0; i < path.length; i++) {
+          var el = path[i];
+          var tag = el.tagName ? el.tagName.toLowerCase() : '';
+          if (tag !== 'a' && tag !== 'area') continue;
+          var href = el.href;
+          if (href && typeof href === 'object') {
+            try { href = href.baseVal ? new URL(href.baseVal, el.baseURI).href : ''; } catch (_) { href = ''; }
+          }
+          if (!href) continue;
+          window.webkit.messageHandlers.officeMiddle.postMessage({ href: href });
+          return;
+        }
+      });
+    })();
+    """
+
+    func userContentController(
+        _ controller: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard let body = message.body as? [String: Any],
+              message.frameInfo.isMainFrame,
+              let href = body["href"] as? String,
+              let url = URL(string: href),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https"
+        else { return }
+        MainActor.assumeIsolated { [weak self] in
+            guard let self, let tab else { return }
+            tab.onMiddleClick?(tab, url)
+        }
+    }
 }
 
 /// A web view that reads the two-finger swipe for itself.
