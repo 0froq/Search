@@ -135,6 +135,12 @@ final class Preferences: ObservableObject {
             AutoScroll.on = autoScroll
         }
     }
+    /// Where a link goes, at the bottom of the page while the pointer is on
+    /// it (see StatusLine.swift). Off unless asked for.
+    @Published var showsLinks: Bool {
+        didSet {
+            store.set(showsLinks, forKey: "links.show")
+            HoveredLink.on = showsLinks
     /// Pages draw at 120 frames a second on a screen that can (see FrameRate.swift).
     /// Off unless asked for.
     @Published var fastPages: Bool {
@@ -221,6 +227,9 @@ final class Preferences: ObservableObject {
         floatFlicks = flicks
         Float.flicks = flicks
         floatsAway = store.bool(forKey: "float.away")
+        let links = store.bool(forKey: "links.show")
+        showsLinks = links
+        HoveredLink.on = links
         let scrolls = store.bool(forKey: "autoscroll")
         autoScroll = scrolls
         AutoScroll.on = scrolls
