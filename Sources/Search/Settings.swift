@@ -432,6 +432,8 @@ struct SettingsPanel: View {
                 Rule()
                 Shortcut("⌘T  ⌘W  ⇧⌘T", "New, close, reopen tab")
                 Rule()
+                Shortcut("⇧⌘V", "Paste and go")
+                Rule()
                 Shortcut("⌃⇥  ⌘1–9", "Next tab, a tab by its place")
                 Rule()
                 Shortcut("⇧⌘S", "Tabs in a sidebar")

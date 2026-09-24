@@ -1346,7 +1346,8 @@ final class Browser: NSObject, ObservableObject {
         open(url, foreground: true, from: active)
     }
 
-    /// ⌘⇧V. What is in the clipboard, if it is a place — or a search.
+    /// ⌘⇧V, when nothing is being typed. What is in the clipboard, if it is a
+    /// place — or a search — in the tab you're on.
     func pasteAndGo() {
         guard let text = NSPasteboard.general.string(forType: .string),
               let url = destination(for: text.trimmingCharacters(in: .whitespacesAndNewlines))

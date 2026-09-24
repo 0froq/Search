@@ -29,6 +29,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- ⌘⇧V in a text field pastes without formatting, as it does in Chrome — in a Google Doc too, and in a box inside another site's frame. Away from a text field it is still Paste and Go. About lists it as Paste and go. ([#138](https://github.com/driceroland/Search/issues/138)) Thanks [@Aaditya2605](https://github.com/Aaditya2605) ([#144](https://github.com/driceroland/Search/pull/144))
 - A new tab opened from a private tab is private too: ⌘T, ⌘-click on a link, ⌘D, Open Image in New Tab, and a bookmark opened with ⌘ used to open an ordinary tab, which kept the page in the history. A link or duplicate stays signed in to what the private tab was ([#121](https://github.com/driceroland/Search/issues/121)) Thanks [@PeterTheMango](https://github.com/PeterTheMango) ([#122](https://github.com/driceroland/Search/pull/122))
 - Pages are told the Safari version this Mac has, not a fixed Safari 26.5: on an older macOS, a site trusting that number could send code its WebKit can't run. Thanks [@peter-bf](https://github.com/peter-bf) ([#110](https://github.com/driceroland/Search/pull/110))
 - Passwords, Bookmarks and the welcome screen find the browsers to bring things over from without walking through their caches: a few milliseconds instead of twenty, each time those lists are drawn. Thanks [@dttdrv](https://github.com/dttdrv) ([#156](https://github.com/driceroland/Search/pull/156))
